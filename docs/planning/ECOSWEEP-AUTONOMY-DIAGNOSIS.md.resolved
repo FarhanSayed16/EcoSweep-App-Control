@@ -1,0 +1,421 @@
+# EcoSweep Autonomy — Complete Diagnosis & Fix Plan
+
+**Date:** 2025-02-19  
+**Scope:** Why the robot doesn't move precisely toward detected objects, loses focus, and fails to pick up garbage in autonomous mode.  
+**Files analysed:**
+
+| File | Lines | Role |
+|------|-------|------|
+| [ecosweep_manual_final_patched.py](file:///d:/Robot_newcontrol/hardware/pi/ecosweep_manual_final_patched.py) | 710 | Bridge + autonomy state machine |
+| [yolo_fpv_stream_optimized.py](file:///d:/Robot_newcontrol/hardware/pi/phase2/yolo_fpv_stream_optimized.py) | 233 | YOLO detection → JSON |
+| [EcoSweep_Master.ino](file:///d:/Robot_newcontrol/hardware/arduino/EcoSweep_Master/EcoSweep_Master.ino) | 473 | Arduino motor/servo/telemetry |
+
+---
+
+## Symptom Summary
+
+| # | What the user sees | Root cause area |
+|---|---|---|
+| 1 | Robot moves "*somewhere near* the object, not precisely toward it" | Steering math + gear scaling |
+| 2 | Robot "loses focus" — detection flickers to NONE mid-approach | YOLO pipeline lag + stale JSON reads |
+| 3 | Robot doesn't pick up the object properly with the arm | Incomplete pickup sequence |
+
+---
+
+## Issue 1 — Robot Does Not Steer Precisely Toward the Object
+
+### 1A. Gear scaling silently halves all autonomy commands
+
+> [!CAUTION]
+> This is likely the **single biggest factor** making movement weak and imprecise.
+
+**How it works:**  
+The Arduino applies `gearScale` to *every* `M:speed,turn` it receives ([EcoSweep_Master.ino:417-419](file:///d:/Robot_newcontrol/hardware/arduino/EcoSweep_Master/EcoSweep_Master.ino#L417-L419)):
+
+```cpp
+long sScaled = (long)(speed * gearScale);
+long tScaled = (long)(turn  * gearScale * TURN_SIGN);
+```
+
+Default gear is **1** → `gearScale = 0.40`. So when autonomy sends `M:70,60`, the Arduino actually drives at `M:28,24` — barely enough to overcome friction.
+
+**Impact:**
+- Forward speed is only 40% of commanded → approach is sluggish
+- Turning force is only 40% of commanded → proportional steering never produces enough rotation
+- Robot appears to "wander" instead of driving toward the target
+
+**Fixes (choose one):**
+
+| Option | What to do | Where |
+|--------|-----------|-------|
+| **A (recommended)** | Bridge sends `GEAR:3` to Arduino when entering AUTO mode, and restores on AUTO_OFF | [ecosweep_manual_final_patched.py](file:///d:/Robot_newcontrol/hardware/pi/ecosweep_manual_final_patched.py) |
+| **B** | Pre-divide the gear scale: multiply autonomy speeds by `1/gearScale` (≈ 2.5×) so after scaling they come out right | [ecosweep_manual_final_patched.py](file:///d:/Robot_newcontrol/hardware/pi/ecosweep_manual_final_patched.py) |
+| **C** | Arduino skips gear scaling when `currentMode == "AUTO_ON"` | [EcoSweep_Master.ino](file:///d:/Robot_newcontrol/hardware/arduino/EcoSweep_Master/EcoSweep_Master.ino) |
+
+---
+
+### 1B. Proportional turn gain is too weak for large offsets
+
+**Current:** `PROPORTIONAL_GAIN = 0.5`, `APPROACH_TURN_MAX = 80` ([bridge:76](file:///d:/Robot_newcontrol/hardware/pi/ecosweep_manual_final_patched.py#L76))
+
+When the object is 100 px off-center: `turn = 0.5 × 100 = 50`. After gear scaling (×0.40), Arduino sees `20` — below the deadband of `8` but still very small.  
+Even without gear scaling, the turn reduces to `50` which is modest for a heavy robot.
+
+**Fix:** After fixing gear scaling (1A), retune:
+- Set `PROPORTIONAL_GAIN = 0.8` (or higher)
+- Or add an **integral term** (sum of past errors) so persistent offsets ramp up the turn
+
+---
+
+### 1C. TURN_LEFT_SIGN / TURN_RIGHT_SIGN may be inverted
+
+The bridge multiplies the proportional turn by `TURN_LEFT_SIGN` or `TURN_RIGHT_SIGN` ([bridge:415](file:///d:/Robot_newcontrol/hardware/pi/ecosweep_manual_final_patched.py#L415)):
+
+```python
+turn = int(turn * TURN_LEFT_SIGN) if turn <= 0 else int(turn * TURN_RIGHT_SIGN)
+```
+
+Both default to `+1`. But the Arduino also has its own `TURN_SIGN = +1`. If the physical wiring makes the robot turn *away* from the object, the default `+1` is wrong.
+
+**Fix:** Empirically test: put an object to the robot's **left**. If the robot turns **right** in auto mode, set `TURN_LEFT_SIGN = -1` (and vice versa). This must be verified physically.
+
+---
+
+### 1D. Simultaneous speed + turn causes weak turning (arcade mix issue)
+
+The Arduino uses **arcade drive** ([EcoSweep_Master.ino:429-431](file:///d:/Robot_newcontrol/hardware/arduino/EcoSweep_Master/EcoSweep_Master.ino#L429-L431)):
+
+```cpp
+left  = sScaled + tScaled;
+right = sScaled - tScaled;
+```
+
+When `sScaled = 28` and `tScaled = 24`, left = 52 and right = 4. The differential is only `48`, which may not be enough to turn the robot at speed.
+
+When the forward speed is high, the turn component gets "diluted" because one wheel just runs a bit slower instead of reversing.
+
+**Fix in autonomy approach logic:** When the object is off-center by more than ~50 px:
+1. **Stop or reduce forward speed** while turning (send `M:0,turn` or `M:20,turn` instead of `M:70,turn`)
+2. Once centered (within `CENTER_DEADZONE_PX`), resume forward
+3. This "stop-turn-go" pattern is more reliable on differential-drive robots
+
+---
+
+## Issue 2 — Robot "Loses Focus" (Detection Flickers to NONE)
+
+### 2A. YOLO detection JSON is read from disk — stale or partially written
+
+The bridge reads `/tmp/ecosweep_detection.json` every 100 ms ([bridge:287](file:///d:/Robot_newcontrol/hardware/pi/ecosweep_manual_final_patched.py#L287)):
+
+```python
+with open(DETECTION_FILE, "r") as f:
+    det = json.load(f)
+```
+
+YOLO writes the same file from another process ([YOLO:162](file:///d:/Robot_newcontrol/hardware/pi/phase2/yolo_fpv_stream_optimized.py#L162)):
+
+```python
+with open(DETECTION_FILE, "w") as f:
+    json.dump(det, f)
+```
+
+> [!WARNING]
+> **Race condition:** The bridge can read a *half-written* file (JSON truncated → `json.load` throws → `det = {}` → `decision = "NONE"`). This causes the "lost detection" flicker.
+
+**Fix:** Atomic write. YOLO should write to a temp file, then rename:
+
+```python
+import tempfile, os
+tmp_fd, tmp_path = tempfile.mkstemp(dir="/tmp", suffix=".json")
+with os.fdopen(tmp_fd, "w") as f:
+    json.dump(det, f)
+os.replace(tmp_path, DETECTION_FILE)  # atomic on Linux
+```
+
+---
+
+### 2B. YOLO runs on every 2nd frame with 50 ms sleep — effective ~5-7 Hz detection
+
+The YOLO worker sleeps `0.05` s each iteration and only runs on every 2nd frame ([YOLO:83,90](file:///d:/Robot_newcontrol/hardware/pi/phase2/yolo_fpv_stream_optimized.py#L83-L90)):
+
+```python
+time.sleep(0.05)
+run_yolo = (frame_count % YOLO_EVERY_N_FRAMES == 0)
+```
+
+On a Pi 4, YOLOv8n at `imgsz=416` takes ~200-400 ms. So effective detection rate is **~2-4 Hz**. The bridge loops at 10 Hz, meaning **most bridge ticks read stale detection data**.
+
+**Impact:** By the time autonomy reacts, the robot has moved and the object may no longer be where the detection said it was, causing oscillation and "losing" the object.
+
+**Fixes:**
+- **Reduce `YOLO_EVERY_N_FRAMES` to 1** (already at 2, minimal gain)
+- **Reduce `YOLO_IMGSZ` to 320** for faster inference at a small accuracy cost
+- **Add a timestamp check in the bridge**: if detection is older than ~500 ms, treat it as "no detection" to avoid acting on stale data
+
+---
+
+### 2C. Detection loss grace period is too short (0.2 s)
+
+`DETECTION_LOSS_GRACE_S = 0.2` means if YOLO doesn't detect garbage for 200 ms, the robot stops. At 2-4 Hz YOLO rate, a **single missed frame** (200-400 ms) triggers the stop.
+
+**Fix:** Increase to `0.5` s or even `0.8` s. During grace, keep the last command (already implemented) but ensure the robot continues toward last known position.
+
+---
+
+### 2D. Robot's own movement causes detection loss (motion blur + object exits frame)
+
+When the robot turns, the camera view rotates. A slow turn at `turn=50` (after gear scaling: `20`) might not cause issues, but a fast turn can:
+1. Blur the image → YOLO misses the object
+2. Swing the object out of frame → `decision = "NONE"`
+
+This creates a feedback loop: turn → lose detection → stop → re-detect → turn → lose again.
+
+**Fix (requires autonomy logic change):**
+- When detection is lost during APPROACH but the object was recently seen, **slow down or stop turning for 0.3-0.5 s** and let the camera settle before declaring "lost"
+- The current `DETECTION_LOSS_GRACE_S` partially handles this, but the robot keeps last command (which may be a fast turn that makes things worse)
+- Better: during grace, send `M:0,0` (coast/stop) instead of continuing the last turn
+
+---
+
+### 2E. No detection timestamp validation in the bridge
+
+The bridge reads the JSON but never checks `det["timestamp"]`. If YOLO crashes and the file is not updated for minutes, the bridge keeps using the old data as if it's live.
+
+**Fix:** Add a staleness check:
+
+```python
+det_age = time.time() - det.get("timestamp", 0)
+if det_age > 1.0:
+    has_garbage = False  # treat stale data as no detection
+```
+
+---
+
+## Issue 3 — Pickup Doesn't Work Properly
+
+### 3A. Pickup arm sequence is too simplistic (only ARM_DOWN → GRIP_CLOSE → ARM_UP)
+
+The current pickup state sends ([bridge:443-463](file:///d:/Robot_newcontrol/hardware/pi/ecosweep_manual_final_patched.py#L443-L463)):
+
+```
+SA:ARM_DOWN_START → 0.5s → STOP
+SA:GRIP_CLOSE_START → 1.8s → STOP
+SA:ARM_UP_START → 0.6s → STOP
+```
+
+**Problems:**
+1. **No FOREARM lowering** — the arm goes down but the forearm stays at 90°. The gripper may not reach the ground.
+2. **No GRIPPER_OPEN before pickup** — if the gripper is already partially closed from a previous attempt, it won't open to receive the object.
+3. **No BASE rotation** — the arm's base doesn't rotate to align with the object position. If the object is slightly left/right, the arm reaches to the wrong spot.
+4. **Timing is guesswork** — `0.5` s of ARM_DOWN moves the servo by ~25° (at 1°/20ms), which may or may not reach ground level depending on starting angle.
+
+**Fix — Full pickup sequence:**
+
+```
+1. M:0,0                         (stop robot)
+2. SA:GRIP_OPEN_START → 0.4s     (open gripper fully)
+3. SA:ARM_DOWN_START → 1.0s      (lower arm)
+4. SA:FOREARM_FORWARD_START → 0.8s  (extend forearm toward ground)
+5. M:CREEP_SPEED,0 → 0.3s        (creep forward so object is under gripper)
+6. M:0,0                         (stop)
+7. SA:GRIP_CLOSE_START → 2.0s    (close gripper around object)
+8. SA:FOREARM_BACKWARD_START → 0.5s  (retract forearm)
+9. SA:ARM_UP_START → 1.0s        (raise arm with object)
+```
+
+> [!IMPORTANT]
+> The exact timing values MUST be tuned on the real hardware. The above are starting estimates based on 1°/20ms servo speed and typical arm geometry.
+
+---
+
+### 3B. No "throw/dispose" step after pickup
+
+After picking up the garbage, the robot just backs up and goes to SEARCH. It never opens the gripper to release the object into a bin or toss it.
+
+**Fix:** After arm up, add:
+```
+10. SA:BASE_RIGHT_START → 0.5s     (rotate arm to the dump side)
+11. SA:GRIP_OPEN_START → 0.5s      (release object)
+12. SA:BASE_LEFT_START → 0.5s      (return arm to center)
+13. Reset all servos to home (S:0,90  S:1,90  S:2,90  S:3,90  S:4,90)
+```
+
+---
+
+### 3C. Pickup triggers on bbox_area threshold — unreliable distance proxy
+
+`PICKUP_BBOX_MIN = 55000` pixels² is used to decide "close enough for pickup" ([bridge:65](file:///d:/Robot_newcontrol/hardware/pi/ecosweep_manual_final_patched.py#L65)). But:
+- A **bottle** at 30 cm might be 40 000 px²; a **book** at 50 cm might be 60 000 px²
+- Object class, orientation, and lens distortion all affect bbox size
+- Without ultrasonic validation (`ULTRASONIC_OBSTACLE_ENABLED = False`), the robot has **no ground truth** for distance
+
+**Fix:**
+- **Enable ultrasonic sensors** — set `ULTRASONIC_OBSTACLE_ENABLED = True`. Verify sensors report valid values (not always `999` or `-1`). If hardware isn't working, fix the sensors first.
+- **Lower `PICKUP_BBOX_MIN`** to `35000-40000` as a more conservative trigger
+- **Use bbox vertical position** (`bbox_cy`) as complementary signal: objects on the ground near the robot will have `bbox_cy > 0.7 * FRAME_HEIGHT`
+
+---
+
+### 3D. PICKUP_STABLE_FRAMES = 5 may be too strict at low YOLO rate
+
+At ~3 Hz YOLO detection, the bridge updates the JSON every ~300 ms. But the bridge checks at 10 Hz. To accumulate 5 stable frames of "CENTERED + large bbox", it needs 5 consecutive matching detections. A single missed detection resets the counter to 0 (`pickup_stable_count = 0`).
+
+**Fix:** Reduce to `PICKUP_STABLE_FRAMES = 3` or use a **time-based** threshold instead: "conditions held for ≥1.0 s" instead of "N consecutive frames."
+
+---
+
+## Issue 4 — Ultrasonic Sensors Disabled (Safety Gap)
+
+`ULTRASONIC_OBSTACLE_ENABLED = False` ([bridge:58](file:///d:/Robot_newcontrol/hardware/pi/ecosweep_manual_final_patched.py#L58)) disables all distance-based safety:
+
+- No front-obstacle stop → robot can crash into walls
+- No distance-based approach speed change → robot charges at full speed until bbox triggers
+- No stuck detection based on front sensor
+
+**Root cause:** Likely disabled because sensors were returning bad values (`999`, `-1`, or `0`).
+
+**Fix:**
+1. **Verify sensors on Arduino Serial Monitor**: open Arduino IDE, watch `DATA:SENSORS:front,left,right`. Put hand in front of sensor. If values make sense → re-enable.
+2. If sensors read `-1` always → check wiring (TRIG/ECHO pins, 5V power)
+3. Once working, set `ULTRASONIC_OBSTACLE_ENABLED = True`
+
+---
+
+## Issue 5 — Autonomy M: Throttling Drops Commands
+
+[_write_arduino_m_throttled](file:///d:/Robot_newcontrol/hardware/pi/ecosweep_manual_final_patched.py#496-505) discards M: commands faster than every 80 ms ([bridge:496-504](file:///d:/Robot_newcontrol/hardware/pi/ecosweep_manual_final_patched.py#L496-L504)). The autonomy loop runs every 100 ms ([bridge:268](file:///d:/Robot_newcontrol/hardware/pi/ecosweep_manual_final_patched.py#L268)), so in theory this is fine. But:
+
+- The 100 ms sleep is not precise (it doesn't account for computation time)
+- If two quick state transitions happen (e.g., grace → approach), both may try to send M: within 80 ms and the second is dropped
+
+**Impact:** Intermittently, the robot doesn't receive the intended steering update.
+
+**Fix:** Replace throttle-based dropping with **latest-value buffering** ("only the latest M: command is sent"): store the latest pending command and send it on the next 80 ms tick. This ensures the most recent intent always reaches the Arduino.
+
+---
+
+## Summary: Priority-Ordered Fix List
+
+| Priority | Issue | Impact | Effort | Section |
+|----------|-------|--------|--------|---------|
+| 🔴 **P0** | Gear scaling halves all autonomy speeds | All movement weak | Low (1 line) | 1A |
+| 🔴 **P0** | JSON race condition (half-written file) | Random detection loss | Low (5 lines) | 2A |
+| 🟠 **P1** | Detection staleness not checked | Acts on old data | Low (3 lines) | 2E |
+| 🟠 **P1** | Grace period too short (0.2 s) | Stops on every YOLO miss | Trivial (1 constant) | 2C |
+| 🟠 **P1** | Pickup arm sequence incomplete | Can't reach / grip object | Medium (sequence rewrite) | 3A |
+| 🟡 **P2** | No gear set on AUTO_ON/OFF | Manual gear affects auto | Low (2 lines) | 1A |
+| 🟡 **P2** | Proportional gain too low | Weak steering correction | Trivial (1 constant) | 1B |
+| 🟡 **P2** | Turn while driving dilutes steering | Robot wanders | Medium (logic change) | 1D |
+| 🟡 **P2** | Ultrasonic disabled | No distance info | Depends on hardware | 4 |
+| 🟢 **P3** | TURN_LEFT/RIGHT_SIGN not calibrated | May turn wrong way | Manual test needed | 1C |
+| 🟢 **P3** | No throw/dispose step | Garbage stays in gripper | Low (sequence addition) | 3B |
+| 🟢 **P3** | PICKUP_STABLE_FRAMES too strict | Rarely triggers pickup | Trivial (1 constant) | 3D |
+| 🟢 **P3** | bbox_area unreliable distance proxy | Wrong pickup timing | Medium (use bbox_cy) | 3C |
+| 🟢 **P3** | M: throttle drops commands | Missed steering updates | Low (buffer pattern) | 5 |
+| 🟢 **P3** | Motion blur breaks detection mid-turn | Lose-acquire oscillation | Medium (stop during grace) | 2D |
+
+---
+
+## Recommended Implementation Order
+
+```mermaid
+flowchart TD
+    A["P0: Fix gear scaling<br/>(send GEAR:3 on AUTO_ON)"] --> B["P0: Atomic JSON write<br/>(YOLO side)"]
+    B --> C["P1: Add detection staleness check<br/>(bridge side)"]
+    C --> D["P1: Increase DETECTION_LOSS_GRACE_S<br/>(0.2 → 0.6)"]
+    D --> E["P1: Rewrite pickup sequence<br/>(open → lower → extend → creep → grip → retract → raise)"]
+    E --> F["P2: Tune PROPORTIONAL_GAIN<br/>(0.5 → 0.8+)"]
+    F --> G["P2: Stop-turn-go steering<br/>(reduce speed while turning)"]
+    G --> H["Test & tune on real hardware"]
+    H --> I["P3: Calibrate TURN_LEFT/RIGHT_SIGN"]
+    H --> J["P3: Add throw/dispose step"]
+    H --> K["P3: Enable ultrasonics if working"]
+```
+
+## Quick-Win Changes (Can Apply Immediately)
+
+These changes are safe, require no hardware testing, and will noticeably improve behavior:
+
+### In [ecosweep_manual_final_patched.py](file:///d:/Robot_newcontrol/hardware/pi/ecosweep_manual_final_patched.py):
+
+```diff
+ # When AUTO_MODE is turned ON, set gear to 3 (full power for autonomous driving)
+ if line.strip() == "MODE:AUTO_ON":
+     with auto_lock:
+         AUTO_MODE = True
+     _log("AUTO_MODE ON - autonomy will drive")
++    _write_arduino("GEAR:3")  # Full power for autonomous movement
+     if arduino:
+         _write_arduino(line.strip())
+     continue
+ if line.strip() == "MODE:AUTO_OFF":
+     with auto_lock:
+         AUTO_MODE = False
+     _log("AUTO_MODE OFF - manual control")
++    _write_arduino("GEAR:1")  # Restore default gear for manual
+     if arduino:
+         _write_arduino(line.strip())
+     continue
+```
+
+```diff
+-DETECTION_LOSS_GRACE_S = 0.2
++DETECTION_LOSS_GRACE_S = 0.6
+```
+
+```diff
+-PROPORTIONAL_GAIN = 0.5
++PROPORTIONAL_GAIN = 0.85
+```
+
+```diff
+-PICKUP_STABLE_FRAMES = 5
++PICKUP_STABLE_FRAMES = 3
+```
+
+### In [yolo_fpv_stream_optimized.py](file:///d:/Robot_newcontrol/hardware/pi/phase2/yolo_fpv_stream_optimized.py) (atomic write):
+
+```diff
++import tempfile
++import os
+
+ # Replace the JSON write block:
+-try:
+-    with open(DETECTION_FILE, "w") as f:
+-        json.dump(det, f)
+-except Exception:
+-    pass
++try:
++    tmp_fd, tmp_path = tempfile.mkstemp(dir="/tmp", suffix=".json")
++    with os.fdopen(tmp_fd, "w") as f:
++        json.dump(det, f)
++    os.replace(tmp_path, DETECTION_FILE)
++except Exception:
++    pass
+```
+
+### In [ecosweep_manual_final_patched.py](file:///d:/Robot_newcontrol/hardware/pi/ecosweep_manual_final_patched.py) (staleness check):
+
+```diff
+ decision = det.get("decision", "NONE")
+ confidence = det.get("confidence", 0.0)
++# Ignore stale detection data (YOLO may have crashed or is too slow)
++det_age = now - det.get("timestamp", 0)
++if det_age > 1.0:
++    decision = "NONE"
++    confidence = 0.0
+ person_detected = det.get("person_detected", False)
+```
+
+---
+
+## What Needs Physical Testing
+
+> [!IMPORTANT]
+> The following cannot be fully resolved without testing on the real robot:
+
+1. **TURN_LEFT_SIGN / TURN_RIGHT_SIGN calibration** — put object to the left; if robot turns right → flip the sign
+2. **PROPORTIONAL_GAIN value** — start at 0.85, increase if turns are still sluggish, decrease if oscillating
+3. **Pickup arm timing** — ARM_DOWN_S, FOREARM_FORWARD_S, GRIP_CLOSE_S depend on arm geometry; start with estimates, refine
+4. **Ultrasonic sensor viability** — check if sensors return valid data; if so, re-enable
+5. **PICKUP_BBOX_MIN threshold** — place object at pickup distance, read `bbox_area` from debug logs, use that value ±20%

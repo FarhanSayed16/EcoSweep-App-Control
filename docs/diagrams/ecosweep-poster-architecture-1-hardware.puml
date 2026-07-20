@@ -1,0 +1,67 @@
+@startuml EcoSweep Hardware Architecture
+!theme plain
+skinparam defaultFontSize 10
+skinparam defaultFontName Arial
+skinparam backgroundColor #F8FAFC
+skinparam roundCorner 10
+skinparam padding 8
+skinparam margin 12
+
+skinparam rectangle {
+  BackgroundColor #E2E8F0
+  BorderColor #475569
+  FontColor #1E293B
+  RoundCorner 8
+}
+skinparam component {
+  BackgroundColor #F1F5F9
+  BorderColor #64748B
+  FontColor #334155
+  RoundCorner 6
+}
+skinparam arrow {
+  Color #475569
+  Thickness 2
+}
+
+title **EcoSweep – System Architecture (Hardware & Data Flow)**
+left to right direction
+
+' === LEFT SIDE: User, Perception, Compute, Communication, Sensing ===
+together {
+  rectangle "**User / Operator**" as User #E0F2FE
+  package "**Perception**" #DBEAFE {
+    component [**USB Camera**\n640×480] as Cam #BFDBFE
+    component [**YOLOv8**\nObject Detection] as YOLO #93C5FD
+  }
+  package "**Compute**" #DCFCE7 {
+    component [**Raspberry Pi**\nBridge & Autonomy] as Pi #BBF7D0
+  }
+  package "**Communication**" #FEF3C7 {
+    component [**Bluetooth SPP**\nAndroid App] as BT #FDE68A
+  }
+  package "**Sensing**" #E0E7FF {
+    component [**Ultrasonic**\nF / L / R] as Ultra #C7D2FE
+  }
+}
+
+' === RIGHT SIDE: Actuation ===
+together {
+  package "**Actuation**" #FCE7F3 {
+    component [**Arduino**\nMotor & Servo] as Ard #FBCFE8
+    component [**DC Motors**] as Motors #F9A8D4
+    component [**5-DOF Arm**\n+ Gripper] as Arm #F472B6
+    Ard --> Motors : PWM
+    Ard --> Arm : Servo
+  }
+}
+
+User --> BT : Commands\nTelemetry
+BT --> Pi
+Cam --> Pi : Frames
+Pi --> YOLO
+YOLO --> Pi : bbox, class
+Pi --> Ard : M: SA:
+Ultra --> Ard : cm
+
+@enduml

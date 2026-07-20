@@ -1,0 +1,32 @@
+@startuml EcoSweep_Hardware_Block
+!theme plain
+skinparam backgroundColor #FAFAFA
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+skinparam ArrowColor #37474F
+skinparam ArrowThickness 2
+
+title EcoSweep Hardware Block Diagram\n**Fig. 2**
+
+package "Compute" #E8F5E9 {
+    [Raspberry Pi 4\nYOLOv8, Bridge, Flask] as Pi
+    [Arduino Mega 2560\nMotor, Servo, Serial] as Arduino
+}
+
+package "Sensors" #E3F2FD {
+    [USB Camera\n640×480 @ 20 FPS] as Cam
+    [HC-SR04 × 3\nFront, Left, Right] as US
+}
+
+package "Actuators" #FFF3E0 {
+    [4× DC Motors\nBTS7960] as Motors
+    [5 Servos + Gripper\nPCA9685] as Arm
+}
+
+Pi -right-> Cam : video
+US -down-> Arduino : DATA:SENSORS
+Pi -down-> Arduino : USB Serial
+Arduino --> Motors : M:speed,turn
+Arduino --> Arm : SA:ARM_*, GRIP_*
+
+@enduml

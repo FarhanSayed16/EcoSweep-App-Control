@@ -1,0 +1,54 @@
+@startuml EcoSweep_Data_Flow
+!theme plain
+skinparam backgroundColor #FAFAFA
+skinparam defaultFontName Arial
+skinparam defaultFontSize 10
+skinparam ArrowColor #37474F
+skinparam sequenceArrowThickness 2
+
+skinparam sequenceParticipant {
+    BackgroundColor #E3F2FD
+    BorderColor #1565C0
+}
+
+skinparam sequenceLifeLine {
+    BorderColor #90A4AE
+}
+
+title EcoSweep Data Flow: Detection to Pickup\n**Fig. 6**
+
+participant "Camera" as Cam #E8F5E9
+participant "YOLO Thread" as YOLO #E8F5E9
+participant "Detection File\n/tmp/ecosweep_detection.json" as File #FFF8E1
+participant "Autonomy Loop" as Auto #E3F2FD
+participant "Bridge" as Bridge #E3F2FD
+participant "Arduino" as Ard #FFF3E0
+
+Cam -> YOLO : frames (640×480)
+YOLO -> YOLO : inference every 2nd frame
+YOLO -> File : write {decision, bbox_area,\nconfidence, person_detected}
+
+loop 10 Hz
+    Auto -> File : read detection
+    Auto -> Auto : state machine logic
+    Auto -> Bridge : send M:speed,turn\nor SA:ARM_*
+    Bridge -> Ard : serial write
+    Ard --> Bridge : DATA:SENSORS:...
+    Bridge --> Auto : telemetry (optional)
+end
+
+note over File
+  decision: MOVE_LEFT |
+  MOVE_RIGHT | CENTERED
+  bbox_area: pixels²
+  confidence: 0–1
+end note
+
+note over Auto
+  States: SEARCH →
+  APPROACH_FAR →
+  APPROACH_CLOSE →
+  PICKUP → RECOVER
+end note
+
+@enduml

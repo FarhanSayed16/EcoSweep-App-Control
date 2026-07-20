@@ -1,0 +1,68 @@
+@startuml EcoSweep Software Architecture
+!theme plain
+skinparam defaultFontSize 9
+skinparam defaultFontName Arial
+skinparam backgroundColor #F8FAFC
+skinparam roundCorner 2
+skinparam padding 6
+skinparam margin 8
+skinparam packageStyle rectangle
+
+skinparam package {
+  BackgroundColor #E2E8F0
+  BorderColor #475569
+  FontColor #1E293B
+  RoundCorner 2
+}
+skinparam component {
+  BackgroundColor #F1F5F9
+  BorderColor #64748B
+  FontColor #334155
+  RoundCorner 2
+}
+skinparam arrow {
+  Color #475569
+  Thickness 1
+}
+
+title **EcoSweep – Control Flow**
+left to right direction
+
+' 2x2 grid: hidden links between components keep blocks in a square
+package "Detection" #DBEAFE {
+  component [YOLO] as YW #93C5FD
+  component [detection.json] as JSON #BFDBFE
+  YW --> JSON
+}
+
+package "Manual" #E0E7FF {
+  component [App] as App #C7D2FE
+}
+
+package "Autonomy" #DCFCE7 {
+  component [State Machine] as SM #BBF7D0
+  component [Steering] as Steer #86EFAC
+  component [M cmd] as M #4ADE80
+  SM --> Steer
+  Steer --> M
+}
+
+package "Actuation" #FEF3C7 {
+  component [Serial] as Ser #FDE68A
+  component [Arduino] as Ard #FCD34D
+  Ser --> Ard
+}
+
+' Hidden links to force 2x2 layout (Detection|Manual on top, Autonomy|Actuation below)
+YW -[hidden]right-> App
+YW -[hidden]down-> SM
+App -[hidden]down-> Ser
+SM -[hidden]right-> Ser
+
+' Real flow
+JSON --> SM
+M --> Ser
+App ..> SM
+Ard --> App
+
+@enduml

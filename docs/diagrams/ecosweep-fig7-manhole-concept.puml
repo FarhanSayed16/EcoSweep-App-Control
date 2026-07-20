@@ -1,0 +1,94 @@
+@startuml EcoSweep_Manhole_Concept
+!theme plain
+skinparam backgroundColor #FAFAFA
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+skinparam ArrowColor #37474F
+skinparam ArrowThickness 2
+
+skinparam rectangle {
+    BackgroundColor<<platform>> #E8F5E9
+    BorderColor<<platform>> #2E7D32
+    FontColor<<platform>> #1B5E20
+    
+    BackgroundColor<<sensor>> #E3F2FD
+    BorderColor<<sensor>> #1565C0
+    FontColor<<sensor>> #0D47A1
+    
+    BackgroundColor<<task>> #FFF8E1
+    BorderColor<<task>> #F9A825
+    FontColor<<task>> #E65100
+    
+    BackgroundColor<<safety>> #FFEBEE
+    BorderColor<<safety>> #C62828
+    FontColor<<safety>> #B71C1C
+}
+
+title EcoSweep Extended Application: Manhole Inspection Concept\n**Fig. 10**
+
+rectangle "EcoSweep Platform (Extended)" <<platform>> {
+    rectangle "Base Platform" as Base {
+        component [Raspberry Pi 4\n+ YOLOv8] as Pi
+        component [Arduino\nMotor/Servo Ctrl] as Arduino
+    }
+    
+    rectangle "Manhole Variant Add-ons" <<sensor>> {
+        component [Downward-facing\nCamera] as DownCam
+        component [Tethered Camera\n(optional)] as TetheredCam
+        component [Long-reach Arm\nor Scoop] as LongArm
+    }
+    
+    rectangle "Safety Sensors (Future)" <<safety>> {
+        component [MQ Gas Sensor] as Gas
+        component [O₂ / Temp] as O2Temp
+    }
+}
+
+rectangle "Manhole Context" #F5F5F5 {
+    rectangle "Pre-Entry Tasks" <<task>> {
+        component [Inspect interior\nblockages] as Inspect
+        component [Detect sludge level] as Sludge
+        component [Identify obstacles] as Obstacles
+    }
+    
+    rectangle "Surface Tasks" <<task>> {
+        component [Remove trash\nnear opening] as Surface
+        component [Prevent debris\nfall-in] as Prevent
+    }
+    
+    rectangle "Assisted Tasks" <<task>> {
+        component [Pull visible debris] as Pull
+        component [Assist suction truck] as Assist
+    }
+}
+
+actor "Sanitation\nWorker" as Worker
+
+Pi -down-> DownCam : video + YOLO
+Pi -down-> TetheredCam : optional
+Arduino -down-> LongArm : SA: commands
+
+DownCam -right-> Inspect : enables
+DownCam -right-> Sludge : enables
+DownCam -right-> Obstacles : enables
+
+Base -down-> Surface : current capability
+Base -down-> Prevent : current capability
+LongArm -down-> Pull : variant
+LongArm -down-> Assist : variant
+
+Gas -up-> Worker : gas alert
+O2Temp -up-> Worker : safety data
+
+Worker -left-> Base : supervise\nMODE:AUTO_ON/OFF
+
+note bottom of "EcoSweep Platform (Extended)"
+  **Scope:**
+  • Pre-entry inspection (no human descent)
+  • Surface-level cleanup
+  • Assisted, non-deep tasks
+  • Does NOT replace trained workers
+  • Human supervision required
+end note
+
+@enduml

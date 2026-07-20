@@ -1,0 +1,841 @@
+# EcoSweep Autonomy — Complete Implementation Plan
+
+> **Goal:** Fix all issues causing imprecise movement, detection loss, and failed pickup — then add enhancements to make autonomous mode significantly more reliable, precise, and robust.
+>
+> **Files to modify:**
+> | # | File | Path |
+> |---|------|------|
+> | 1 | Bridge (autonomy) | [hardware/pi/ecosweep_manual_final_patched.py](file:///d:/Robot_newcontrol/hardware/pi/ecosweep_manual_final_patched.py) |
+> | 2 | YOLO detection | [hardware/pi/phase2/yolo_fpv_stream_optimized.py](file:///d:/Robot_newcontrol/hardware/pi/phase2/yolo_fpv_stream_optimized.py) |
+>
+> Arduino firmware ([EcoSweep_Master.ino](file:///d:/Robot_newcontrol/hardware/arduino/EcoSweep_Master/EcoSweep_Master.ino)) is **not modified** — all fixes are on the Pi side.
+
+---
+
+## Phase 1 — Critical Motor & Data Fixes (P0)
+
+> These two changes eliminate the two biggest root causes. Apply first.
+
+---
+
+### Change 1.1 — Force Gear 3 during autonomous mode
+
+**Problem:** Arduino default gear is 1 (`gearScale=0.40`), halving all autonomy commands.
+
+#### [MODIFY] [ecosweep_manual_final_patched.py](file:///d:/Robot_newcontrol/hardware/pi/ecosweep_manual_final_patched.py)
+
+**Find** (around line 528–541):
+```python
+if line.strip() == "MODE:AUTO_ON":
+    with auto_lock:
+        AUTO_MODE = True
+    _log("AUTO_MODE ON - autonomy will drive")
+    if arduino:
+        _write_arduino(line.strip())
+    continue
+if line.strip() == "MODE:AUTO_OFF":
+    with auto_lock:
+        AUTO_MODE = False
+    _log("AUTO_MODE OFF - manual control")
+    if arduino:
+        _write_arduino(line.strip())
+    continue
+```
+
+**Replace with:**
+```python
+if line.strip() == "MODE:AUTO_ON":
+    with auto_lock:
+        AUTO_MODE = True
+    _log("AUTO_MODE ON - autonomy will drive")
+    _write_arduino("GEAR:3")          # ← NEW: full power for autonomous
+    if arduino:
+        _write_arduino(line.strip())
+    continue
+if line.strip() == "MODE:AUTO_OFF":
+    with auto_lock:
+        AUTO_MODE = False
+    _log("AUTO_MODE OFF - manual control")
+    _write_arduino("GEAR:1")          # ← NEW: restore default for manual
+    if arduino:
+        _write_arduino(line.strip())
+    continue
+```
+
+---
+
+### Change 1.2 — Atomic JSON write (YOLO side)
+
+**Problem:** Bridge can read a half-written JSON → empty detection → "lost focus."
+
+#### [MODIFY] [yolo_fpv_stream_optimized.py](file:///d:/Robot_newcontrol/hardware/pi/phase2/yolo_fpv_stream_optimized.py)
+
+**Step A — Add imports** (at top of file, after existing imports):
+```python
+import tempfile
+```
+> [os](file:///d:/Robot_newcontrol/lib/services/database_service.dart#328-332) is not imported by default in this file — also add it if missing:
+```python
+import os
+```
+
+**Step B — Replace the JSON write block** (around line 161–165):
+
+**Find:**
+```python
+try:
+    with open(DETECTION_FILE, "w") as f:
+        json.dump(det, f)
+except Exception:
+    pass
+```
+
+**Replace with:**
+```python
+try:
+    tmp_fd, tmp_path = tempfile.mkstemp(dir="/tmp", suffix=".json")
+    with os.fdopen(tmp_fd, "w") as f:
+        json.dump(det, f)
+    os.replace(tmp_path, DETECTION_FILE)   # atomic on Linux
+except Exception:
+    try:
+        os.unlink(tmp_path)
+    except Exception:
+        pass
+```
+
+---
+
+## Phase 2 — Detection Pipeline Robustness (P1)
+
+> These changes prevent the "losing focus" and "flickering" problems.
+
+---
+
+### Change 2.1 — Reject stale detection data
+
+**Problem:** If YOLO crashes or is slow, bridge acts on old detection data forever.
+
+#### [MODIFY] [ecosweep_manual_final_patched.py](file:///d:/Robot_newcontrol/hardware/pi/ecosweep_manual_final_patched.py)
+
+**Find** (around line 292–299):
+```python
+        decision = det.get("decision", "NONE")
+        confidence = det.get("confidence", 0.0)
+        person_detected = det.get("person_detected", False)
+```
+
+**Replace with:**
+```python
+        decision = det.get("decision", "NONE")
+        confidence = det.get("confidence", 0.0)
+        # ← NEW: reject stale detection (YOLO crash / lag)
+        det_age = now - det.get("timestamp", 0)
+        if det_age > 1.0:
+            decision = "NONE"
+            confidence = 0.0
+        person_detected = det.get("person_detected", False)
+```
+
+---
+
+### Change 2.2 — Increase detection loss grace period
+
+**Problem:** 0.2 s grace is shorter than one YOLO inference cycle (~300 ms).
+
+#### [MODIFY] [ecosweep_manual_final_patched.py](file:///d:/Robot_newcontrol/hardware/pi/ecosweep_manual_final_patched.py)
+
+**Find:**
+```python
+DETECTION_LOSS_GRACE_S = 0.2
+```
+
+**Replace with:**
+```python
+DETECTION_LOSS_GRACE_S = 0.6   # Must survive 1–2 missed YOLO frames (~300 ms each)
+```
+
+---
+
+### Change 2.3 — Smooth detection with exponential moving average (NEW enhancement)
+
+**Problem:** Single-frame jitter in `bbox_center_x` makes the robot oscillate left/right every 100 ms.
+
+#### [MODIFY] [ecosweep_manual_final_patched.py](file:///d:/Robot_newcontrol/hardware/pi/ecosweep_manual_final_patched.py)
+
+**Step A — Add constants** (after the existing autonomy tuning constants, around line 92):
+
+```python
+# Detection smoothing (exponential moving average)
+EMA_ALPHA = 0.4  # 0.0 = ignore new data, 1.0 = no smoothing. 0.4 = good balance.
+```
+
+**Step B — Add smoothing state** (inside [autonomy_loop](file:///d:/Robot_newcontrol/hardware/pi/ecosweep_manual_final_patched.py#249-486), after the existing variable initializations around line 265):
+
+```python
+    smoothed_bbox_cx = 0.0
+    smoothed_bbox_area = 0.0
+    smoothed_initialized = False
+```
+
+**Step C — Apply smoothing** (after reading detection data, before using `bbox_cx` and `bbox_area`).
+
+**Find** (around line 296–304):
+```python
+        bbox_cx = det.get("bbox_center_x", 0)
+        bbox_area = det.get("bbox_area", 0)
+        frame_center = det.get("frame_center", 320)
+        has_garbage = decision in ("MOVE_LEFT", "MOVE_RIGHT", "CENTERED") and confidence >= GARBAGE_MIN_CONF
+```
+
+**Replace with:**
+```python
+        raw_bbox_cx = det.get("bbox_center_x", 0)
+        raw_bbox_area = det.get("bbox_area", 0)
+        frame_center = det.get("frame_center", 320)
+        has_garbage = decision in ("MOVE_LEFT", "MOVE_RIGHT", "CENTERED") and confidence >= GARBAGE_MIN_CONF
+
+        # ← NEW: smooth detection to reduce oscillation
+        if has_garbage:
+            if not smoothed_initialized:
+                smoothed_bbox_cx = raw_bbox_cx
+                smoothed_bbox_area = raw_bbox_area
+                smoothed_initialized = True
+            else:
+                smoothed_bbox_cx = EMA_ALPHA * raw_bbox_cx + (1 - EMA_ALPHA) * smoothed_bbox_cx
+                smoothed_bbox_area = EMA_ALPHA * raw_bbox_area + (1 - EMA_ALPHA) * smoothed_bbox_area
+            bbox_cx = smoothed_bbox_cx
+            bbox_area = smoothed_bbox_area
+        else:
+            bbox_cx = raw_bbox_cx
+            bbox_area = raw_bbox_area
+            # Don't reset smoothed values — reuse on re-detection
+```
+
+**Step D — Recompute CENTERED using smoothed values** (replace the `is_centered` line):
+
+**Find:**
+```python
+        is_centered = decision == "CENTERED"
+```
+
+**Replace with:**
+```python
+        # ← NEW: re-evaluate centered using smoothed bbox_cx (more stable than raw)
+        if has_garbage:
+            is_centered = abs(bbox_cx - frame_center) < CENTER_MARGIN_PX
+        else:
+            is_centered = False
+```
+
+---
+
+## Phase 3 — PD Steering Controller (P2)
+
+> Replaces the weak proportional-only controller with proportional + derivative for smoother, faster centering.
+
+---
+
+### Change 3.1 — Add derivative term & stop-turn-go logic
+
+**Problem:** Proportional-only steering is too weak at small offsets and oscillates at large offsets. Robot also tries to turn while driving forward, which dilutes steering on a differential-drive robot.
+
+#### [MODIFY] [ecosweep_manual_final_patched.py](file:///d:/Robot_newcontrol/hardware/pi/ecosweep_manual_final_patched.py)
+
+**Step A — Update constants:**
+
+**Find:**
+```python
+PROPORTIONAL_GAIN = 0.5
+CENTER_DEADZONE_PX = 15
+```
+
+**Replace with:**
+```python
+PROPORTIONAL_GAIN = 0.85        # Stronger P response (was 0.5)
+DERIVATIVE_GAIN = 0.15          # ← NEW: damping to reduce oscillation
+CENTER_DEADZONE_PX = 12         # Tighter deadzone for precision (was 15)
+TURN_ONLY_THRESHOLD_PX = 50     # ← NEW: if offset > this, stop driving and only turn
+```
+
+**Step B — Replace [_proportional_turn](file:///d:/Robot_newcontrol/hardware/pi/ecosweep_manual_final_patched.py#210-223) function:**
+
+**Find** (around line 210–222):
+```python
+def _proportional_turn(bbox_cx, frame_center):
+    """Compute turn proportional to object offset from center. Negative = left, positive = right."""
+    error = bbox_cx - frame_center
+    if abs(error) < CENTER_DEADZONE_PX:
+        return 0
+    turn_raw = int(PROPORTIONAL_GAIN * error)
+    turn_raw = max(-APPROACH_TURN_MAX, min(APPROACH_TURN_MAX, turn_raw))
+    # Minimum turn so robot actually rotates when off-center
+    if turn_raw > 0 and turn_raw < ALIGN_TURN:
+        turn_raw = ALIGN_TURN
+    elif turn_raw < 0 and turn_raw > -ALIGN_TURN:
+        turn_raw = -ALIGN_TURN
+    return turn_raw
+```
+
+**Replace with:**
+```python
+_prev_error = 0.0  # Module-level for derivative calculation
+
+def _pd_turn(bbox_cx, frame_center):
+    """PD controller: proportional + derivative for smooth, fast centering."""
+    global _prev_error
+    error = bbox_cx - frame_center
+    if abs(error) < CENTER_DEADZONE_PX:
+        _prev_error = error
+        return 0
+
+    # P term
+    p_term = PROPORTIONAL_GAIN * error
+    # D term (rate of change of error — dampens oscillation)
+    d_term = DERIVATIVE_GAIN * (error - _prev_error)
+    _prev_error = error
+
+    turn_raw = int(p_term + d_term)
+    turn_raw = max(-APPROACH_TURN_MAX, min(APPROACH_TURN_MAX, turn_raw))
+
+    # Minimum turn so robot actually rotates when slightly off-center
+    if 0 < turn_raw < ALIGN_TURN:
+        turn_raw = ALIGN_TURN
+    elif -ALIGN_TURN < turn_raw < 0:
+        turn_raw = -ALIGN_TURN
+    return turn_raw
+```
+
+**Step C — Update all calls from [_proportional_turn](file:///d:/Robot_newcontrol/hardware/pi/ecosweep_manual_final_patched.py#210-223) to `_pd_turn`:**
+
+**Find** (2 occurrences, around lines 414 and 420):
+```python
+                turn = _proportional_turn(bbox_cx, frame_center)
+```
+
+**Replace each with:**
+```python
+                turn = _pd_turn(bbox_cx, frame_center)
+```
+
+**Step D — Stop-turn-go: reduce forward speed when steering hard** (in APPROACH_FAR and APPROACH_CLOSE blocks).
+
+**Find** (around line 413–418, APPROACH_FAR block):
+```python
+            if state == "APPROACH_FAR":
+                turn = _pd_turn(bbox_cx, frame_center)
+                turn = int(turn * TURN_LEFT_SIGN) if turn <= 0 else int(turn * TURN_RIGHT_SIGN)
+                last_approach_speed = APPROACH_SPEED_FAR
+                last_approach_turn = turn
+                _write_arduino_m_throttled(f"M:{APPROACH_SPEED_FAR},{turn}")
+```
+
+**Replace with:**
+```python
+            if state == "APPROACH_FAR":
+                turn = _pd_turn(bbox_cx, frame_center)
+                turn = int(turn * TURN_LEFT_SIGN) if turn <= 0 else int(turn * TURN_RIGHT_SIGN)
+                # ← NEW: stop-turn-go — reduce speed when steering hard
+                if abs(bbox_cx - frame_center) > TURN_ONLY_THRESHOLD_PX:
+                    fwd_speed = 0   # Pure turn, no forward
+                else:
+                    fwd_speed = APPROACH_SPEED_FAR
+                last_approach_speed = fwd_speed
+                last_approach_turn = turn
+                _write_arduino_m_throttled(f"M:{fwd_speed},{turn}")
+```
+
+**Find** (around line 419–424, APPROACH_CLOSE block — the `else` branch):
+```python
+            else:
+                turn = _pd_turn(bbox_cx, frame_center)
+                turn = int(turn * TURN_LEFT_SIGN) if turn <= 0 else int(turn * TURN_RIGHT_SIGN)
+                last_approach_speed = APPROACH_SPEED_CLOSE
+                last_approach_turn = turn
+                _write_arduino_m_throttled(f"M:{APPROACH_SPEED_CLOSE},{turn}")
+```
+
+**Replace with:**
+```python
+            else:
+                turn = _pd_turn(bbox_cx, frame_center)
+                turn = int(turn * TURN_LEFT_SIGN) if turn <= 0 else int(turn * TURN_RIGHT_SIGN)
+                # ← NEW: stop-turn-go at close range too
+                if abs(bbox_cx - frame_center) > TURN_ONLY_THRESHOLD_PX:
+                    fwd_speed = 0
+                elif abs(bbox_cx - frame_center) > CENTER_MARGIN_PX:
+                    fwd_speed = APPROACH_SPEED_CLOSE // 2   # Half speed while correcting
+                else:
+                    fwd_speed = APPROACH_SPEED_CLOSE
+                last_approach_speed = fwd_speed
+                last_approach_turn = turn
+                _write_arduino_m_throttled(f"M:{fwd_speed},{turn}")
+```
+
+---
+
+### Change 3.2 — Lower PICKUP_STABLE_FRAMES
+
+**Find:**
+```python
+PICKUP_STABLE_FRAMES = 5
+```
+
+**Replace with:**
+```python
+PICKUP_STABLE_FRAMES = 3   # At ~3 Hz YOLO, 5 consecutive is too strict — often resets
+```
+
+---
+
+## Phase 4 — Pickup Sequence Rewrite (P1)
+
+> Replaces the oversimplified 3-step arm sequence with a complete pickup + dispose cycle.
+
+---
+
+### Change 4.1 — Full pickup and dispose sequence
+
+#### [MODIFY] [ecosweep_manual_final_patched.py](file:///d:/Robot_newcontrol/hardware/pi/ecosweep_manual_final_patched.py)
+
+**Step A — Add new timing constants** (replace existing pickup constants, around line 83–89):
+
+**Find:**
+```python
+PICKUP_CREEP_SPEED = 25
+PICKUP_CREEP_DURATION_S = 0.4
+PICKUP_ARM_DOWN_S = 0.5
+PICKUP_GRIP_CLOSE_S = 1.8
+PICKUP_ARM_UP_S = 0.6
+BACKUP_SPEED = -70
+BACKUP_DURATION_S = 0.5
+```
+
+**Replace with:**
+```python
+# Pickup sequence timings (tune on real hardware)
+PICKUP_CREEP_SPEED = 25
+PICKUP_CREEP_DURATION_S = 0.3
+PICKUP_GRIP_OPEN_S = 0.6         # ← NEW: open gripper before lowering
+PICKUP_ARM_DOWN_S = 1.0           # Longer to reach ground (was 0.5)
+PICKUP_FOREARM_FORWARD_S = 0.8    # ← NEW: extend forearm toward ground
+PICKUP_GRIP_CLOSE_S = 2.0         # Slightly longer for firm grip (was 1.8)
+PICKUP_FOREARM_RETRACT_S = 0.5    # ← NEW: retract forearm after gripping
+PICKUP_ARM_UP_S = 1.0             # Longer to fully raise (was 0.6)
+PICKUP_DISPOSE_BASE_TURN_S = 0.5  # ← NEW: rotate arm to dump side
+PICKUP_DISPOSE_OPEN_S = 0.5       # ← NEW: release object
+PICKUP_DISPOSE_BASE_RETURN_S = 0.5  # ← NEW: return arm to center
+BACKUP_SPEED = -70
+BACKUP_DURATION_S = 0.5
+# After pickup, how many seconds to ignore detections (avoid re-detecting the same spot)
+PICKUP_COOLDOWN_S = 2.0           # ← NEW
+```
+
+**Step B — Replace the PICKUP state** (around line 432–465):
+
+**Find:**
+```python
+        # ---- PICKUP: creep forward, then arm sequence (abort if AUTO_MODE off) ----
+        if state == "PICKUP":
+            _write_arduino("M:0,0")
+            _write_arduino(f"M:{PICKUP_CREEP_SPEED},0")
+            if not _sleep_check_auto(PICKUP_CREEP_DURATION_S):
+                _write_arduino("M:0,0")
+                state = "IDLE"
+                continue
+            _write_arduino("M:0,0")
+            if not _sleep_check_auto(0.1):
+                state = "IDLE"
+                continue
+            _write_arduino("SA:ARM_DOWN_START")
+            if not _sleep_check_auto(PICKUP_ARM_DOWN_S):
+                _write_arduino("SA:ARM_DOWN_STOP")
+                _write_arduino("M:0,0")
+                state = "IDLE"
+                continue
+            _write_arduino("SA:ARM_DOWN_STOP")
+            _write_arduino("SA:GRIP_CLOSE_START")
+            if not _sleep_check_auto(PICKUP_GRIP_CLOSE_S):
+                _write_arduino("SA:GRIP_CLOSE_STOP")
+                _write_arduino("M:0,0")
+                state = "IDLE"
+                continue
+            _write_arduino("SA:GRIP_CLOSE_STOP")
+            _write_arduino("SA:ARM_UP_START")
+            if not _sleep_check_auto(PICKUP_ARM_UP_S):
+                _write_arduino("SA:ARM_UP_STOP")
+                _write_arduino("M:0,0")
+                state = "IDLE"
+                continue
+            _write_arduino("SA:ARM_UP_STOP")
+            _write_arduino("M:0,0")
+            state = "RECOVER"
+```
+
+**Replace with:**
+```python
+        # ---- PICKUP: full arm sequence with dispose (abort if AUTO_MODE off) ----
+        if state == "PICKUP":
+            _log("PICKUP: starting full sequence")
+            _write_arduino("M:0,0")
+
+            # Step 1: Open gripper fully
+            _write_arduino("SA:GRIP_OPEN_START")
+            if not _sleep_check_auto(PICKUP_GRIP_OPEN_S):
+                _write_arduino("SA:GRIP_OPEN_STOP"); _write_arduino("M:0,0"); state = "IDLE"; continue
+            _write_arduino("SA:GRIP_OPEN_STOP")
+
+            # Step 2: Lower arm
+            _write_arduino("SA:ARM_DOWN_START")
+            if not _sleep_check_auto(PICKUP_ARM_DOWN_S):
+                _write_arduino("SA:ARM_DOWN_STOP"); _write_arduino("M:0,0"); state = "IDLE"; continue
+            _write_arduino("SA:ARM_DOWN_STOP")
+
+            # Step 3: Extend forearm toward ground
+            _write_arduino("SA:FOREARM_FORWARD_START")
+            if not _sleep_check_auto(PICKUP_FOREARM_FORWARD_S):
+                _write_arduino("SA:FOREARM_FORWARD_STOP"); _write_arduino("M:0,0"); state = "IDLE"; continue
+            _write_arduino("SA:FOREARM_FORWARD_STOP")
+
+            # Step 4: Creep forward so object is under gripper
+            _write_arduino(f"M:{PICKUP_CREEP_SPEED},0")
+            if not _sleep_check_auto(PICKUP_CREEP_DURATION_S):
+                _write_arduino("M:0,0"); state = "IDLE"; continue
+            _write_arduino("M:0,0")
+            _sleep_check_auto(0.1)
+
+            # Step 5: Close gripper around object
+            _write_arduino("SA:GRIP_CLOSE_START")
+            if not _sleep_check_auto(PICKUP_GRIP_CLOSE_S):
+                _write_arduino("SA:GRIP_CLOSE_STOP"); _write_arduino("M:0,0"); state = "IDLE"; continue
+            _write_arduino("SA:GRIP_CLOSE_STOP")
+
+            # Step 6: Retract forearm
+            _write_arduino("SA:FOREARM_BACKWARD_START")
+            if not _sleep_check_auto(PICKUP_FOREARM_RETRACT_S):
+                _write_arduino("SA:FOREARM_BACKWARD_STOP"); _write_arduino("M:0,0"); state = "IDLE"; continue
+            _write_arduino("SA:FOREARM_BACKWARD_STOP")
+
+            # Step 7: Raise arm
+            _write_arduino("SA:ARM_UP_START")
+            if not _sleep_check_auto(PICKUP_ARM_UP_S):
+                _write_arduino("SA:ARM_UP_STOP"); _write_arduino("M:0,0"); state = "IDLE"; continue
+            _write_arduino("SA:ARM_UP_STOP")
+
+            # Step 8: Dispose — rotate arm to dump side, release, return
+            _write_arduino("SA:BASE_RIGHT_START")
+            if not _sleep_check_auto(PICKUP_DISPOSE_BASE_TURN_S):
+                _write_arduino("SA:BASE_RIGHT_STOP"); _write_arduino("M:0,0"); state = "IDLE"; continue
+            _write_arduino("SA:BASE_RIGHT_STOP")
+
+            _write_arduino("SA:GRIP_OPEN_START")
+            if not _sleep_check_auto(PICKUP_DISPOSE_OPEN_S):
+                _write_arduino("SA:GRIP_OPEN_STOP"); state = "IDLE"; continue
+            _write_arduino("SA:GRIP_OPEN_STOP")
+
+            _write_arduino("SA:BASE_LEFT_START")
+            if not _sleep_check_auto(PICKUP_DISPOSE_BASE_RETURN_S):
+                _write_arduino("SA:BASE_LEFT_STOP"); state = "IDLE"; continue
+            _write_arduino("SA:BASE_LEFT_STOP")
+
+            # Step 9: Reset all servos to home position
+            for servo_id in range(5):
+                _write_arduino(f"S:{servo_id},90")
+                time.sleep(0.05)
+
+            _log("PICKUP: sequence complete, entering cooldown")
+            _write_arduino("M:0,0")
+            # Cooldown: ignore detections briefly so we don't re-target same spot
+            _sleep_check_auto(PICKUP_COOLDOWN_S)
+            state = "RECOVER"
+```
+
+---
+
+## Phase 5 — Reliability Enhancements (P2/P3, NEW)
+
+> Additional improvements beyond the original diagnosis to make autonomy significantly more reliable.
+
+---
+
+### Change 5.1 — Improved search pattern (sweep instead of jerk)
+
+**Problem:** Current search alternates direction every 1.2 s, causing jerky left-right-left behavior. Robot may miss objects between sweep arcs.
+
+#### [MODIFY] [ecosweep_manual_final_patched.py](file:///d:/Robot_newcontrol/hardware/pi/ecosweep_manual_final_patched.py)
+
+**Find** (the SEARCH_TURN_DURATION_S constant):
+```python
+SEARCH_TURN_DURATION_S = 1.2
+```
+
+**Replace with:**
+```python
+SEARCH_TURN_DURATION_S = 2.5    # Longer sweeps to cover more area (was 1.2)
+SEARCH_FORWARD_BURST_S = 0.5    # ← NEW: drive forward briefly between sweeps
+SEARCH_FORWARD_SPEED = 40       # ← NEW: slow forward during burst
+```
+
+**Find** (the SEARCH state, around line 325–346):
+```python
+        if state == "SEARCH":
+            if has_garbage:
+                state = "APPROACH_FAR" if bbox_area < APPROACH_CLOSE_BBOX else "APPROACH_CLOSE"
+                last_garbage_time = now
+                last_no_garbage_time = 0.0
+                last_valid_detection_time = now
+                last_seen_bbox_area = bbox_area
+                last_centered_bbox_area = bbox_area if is_centered else 0
+                last_front_for_stuck = front_ok
+                stuck_since = now
+                last_bbox_growth_time = now
+                pickup_stable_count = 0
+            else:
+                last_no_garbage_time = now if last_no_garbage_time == 0 else last_no_garbage_time
+                if last_search_flip_time == 0:
+                    last_search_flip_time = now
+                if now - last_search_flip_time >= SEARCH_TURN_DURATION_S:
+                    search_direction *= -1
+                    last_search_flip_time = now
+                turn = SEARCH_TURN * search_direction
+                _write_arduino_m_throttled(f"M:{SEARCH_SPEED},{turn}")
+            continue
+```
+
+**Replace with:**
+```python
+        if state == "SEARCH":
+            if has_garbage:
+                state = "APPROACH_FAR" if bbox_area < APPROACH_CLOSE_BBOX else "APPROACH_CLOSE"
+                last_garbage_time = now
+                last_no_garbage_time = 0.0
+                last_valid_detection_time = now
+                last_seen_bbox_area = bbox_area
+                last_centered_bbox_area = bbox_area if is_centered else 0
+                last_front_for_stuck = front_ok
+                stuck_since = now
+                last_bbox_growth_time = now
+                pickup_stable_count = 0
+                smoothed_initialized = False  # Reset smoothing for new target
+            else:
+                last_no_garbage_time = now if last_no_garbage_time == 0 else last_no_garbage_time
+                if last_search_flip_time == 0:
+                    last_search_flip_time = now
+                elapsed_search = now - last_search_flip_time
+                if elapsed_search >= SEARCH_TURN_DURATION_S + SEARCH_FORWARD_BURST_S:
+                    # ← NEW: after turning + forward burst, flip direction
+                    search_direction *= -1
+                    last_search_flip_time = now
+                elif elapsed_search >= SEARCH_TURN_DURATION_S:
+                    # ← NEW: forward burst between sweeps (cover ground)
+                    _write_arduino_m_throttled(f"M:{SEARCH_FORWARD_SPEED},0")
+                else:
+                    turn = SEARCH_TURN * search_direction
+                    _write_arduino_m_throttled(f"M:{SEARCH_SPEED},{turn}")
+            continue
+```
+
+---
+
+### Change 5.2 — Send autonomous state to app (NEW enhancement)
+
+**Problem:** App has no idea what the autonomy state machine is doing. User can't tell if it's searching, approaching, or stuck.
+
+#### [MODIFY] [ecosweep_manual_final_patched.py](file:///d:/Robot_newcontrol/hardware/pi/ecosweep_manual_final_patched.py)
+
+**Add a helper function** (after [_write_arduino_m_throttled](file:///d:/Robot_newcontrol/hardware/pi/ecosweep_manual_final_patched.py#496-505), around line 504):
+
+```python
+_last_state_sent = ""
+
+def _send_state_to_app(state_name):
+    """Send current autonomy state to app over Bluetooth for UI display."""
+    global _last_state_sent, client_sock
+    if state_name == _last_state_sent:
+        return  # Don't spam
+    _last_state_sent = state_name
+    if client_sock:
+        try:
+            client_sock.send(f"DATA:AUTO_STATE:{state_name}\n".encode())
+        except Exception:
+            pass
+```
+
+**Usage:** Add `_send_state_to_app(state)` call at the start of each state block (SEARCH, APPROACH_FAR, APPROACH_CLOSE, PICKUP, RECOVER, STOP). For example, right after each `if state == "SEARCH":` etc., add:
+```python
+            _send_state_to_app(state)
+```
+
+---
+
+### Change 5.3 — YOLO watchdog (NEW enhancement)
+
+**Problem:** If the YOLO process crashes, the detection file stops updating. The bridge keeps reading stale data. Change 2.1 helps but doesn't alert the user.
+
+#### [MODIFY] [ecosweep_manual_final_patched.py](file:///d:/Robot_newcontrol/hardware/pi/ecosweep_manual_final_patched.py)
+
+**Add at the end of the staleness check** (after Change 2.1):
+
+```python
+        # ← NEW: warn if YOLO seems dead
+        if det_age > 5.0 and state != "IDLE":
+            if not hasattr(autonomy_loop, '_yolo_warned'):
+                _log("WARNING: YOLO detection file is >5s old — YOLO may have crashed")
+                autonomy_loop._yolo_warned = True
+        elif det_age <= 1.0:
+            autonomy_loop._yolo_warned = False
+```
+
+---
+
+### Change 5.4 — During grace period, coast instead of continuing last turn (NEW)
+
+**Problem:** When detection flickers off, the grace period continues the last M: command. If that was a fast turn, the robot turns *away* from where the object was, making re-detection harder.
+
+#### [MODIFY] [ecosweep_manual_final_patched.py](file:///d:/Robot_newcontrol/hardware/pi/ecosweep_manual_final_patched.py)
+
+**Find** (around line 362–364, inside the detection-lost handling):
+```python
+                elif time_since_lost <= DETECTION_LOSS_GRACE_S:
+                    # Grace period: keep last command to avoid jerky stop on brief flicker
+                    _write_arduino_m_throttled(f"M:{last_approach_speed},{last_approach_turn}")
+```
+
+**Replace with:**
+```python
+                elif time_since_lost <= DETECTION_LOSS_GRACE_S:
+                    # ← CHANGED: coast with reduced speed, no turn (avoid turning away)
+                    grace_speed = max(last_approach_speed // 2, 20) if last_approach_speed > 0 else 0
+                    _write_arduino_m_throttled(f"M:{grace_speed},0")
+```
+
+---
+
+### Change 5.5 — Pickup retry on failure detection (NEW enhancement)
+
+**Problem:** After pickup, the robot immediately goes to SEARCH. If the object is still there (grip failed), it should retry once.
+
+#### [MODIFY] [ecosweep_manual_final_patched.py](file:///d:/Robot_newcontrol/hardware/pi/ecosweep_manual_final_patched.py)
+
+**Add a counter** (in [autonomy_loop](file:///d:/Robot_newcontrol/hardware/pi/ecosweep_manual_final_patched.py#249-486) variable initialization, around line 265):
+```python
+    pickup_retry_count = 0
+    MAX_PICKUP_RETRIES = 1  # Try pickup once more if object still detected
+```
+
+**At the end of the PICKUP state** (after the servo reset / before entering RECOVER), add:
+```python
+            # ← NEW: check if object is still there after pickup
+            time.sleep(0.3)  # Let YOLO update
+            try:
+                with open(DETECTION_FILE, "r") as f:
+                    post_det = json.load(f)
+                post_has_garbage = (post_det.get("decision", "NONE") in ("MOVE_LEFT", "MOVE_RIGHT", "CENTERED")
+                                    and post_det.get("confidence", 0) >= GARBAGE_MIN_CONF)
+            except Exception:
+                post_has_garbage = False
+
+            if post_has_garbage and pickup_retry_count < MAX_PICKUP_RETRIES:
+                _log(f"PICKUP: object still detected! Retry {pickup_retry_count + 1}/{MAX_PICKUP_RETRIES}")
+                pickup_retry_count += 1
+                state = "APPROACH_CLOSE"  # Try approaching again
+                continue
+            else:
+                pickup_retry_count = 0
+```
+
+---
+
+## Phase 6 — Optional: Re-enable Ultrasonics
+
+> Only after verifying hardware on the real robot.
+
+### Change 6.1 — Enable ultrasonic obstacle detection
+
+**Find:**
+```python
+ULTRASONIC_OBSTACLE_ENABLED = False
+```
+
+**Replace with (only if sensors give valid readings):**
+```python
+ULTRASONIC_OBSTACLE_ENABLED = True
+```
+
+---
+
+## Summary of All Constants Changed
+
+| Constant | Old Value | New Value | Reason |
+|----------|-----------|-----------|--------|
+| `DETECTION_LOSS_GRACE_S` | 0.2 | 0.6 | Survive missed YOLO frames |
+| `PROPORTIONAL_GAIN` | 0.5 | 0.85 | Stronger steering |
+| `CENTER_DEADZONE_PX` | 15 | 12 | Tighter precision |
+| `PICKUP_STABLE_FRAMES` | 5 | 3 | Trigger pickup more reliably |
+| `PICKUP_ARM_DOWN_S` | 0.5 | 1.0 | Reach ground |
+| `PICKUP_GRIP_CLOSE_S` | 1.8 | 2.0 | Firmer grip |
+| `PICKUP_ARM_UP_S` | 0.6 | 1.0 | Fully raise |
+| `PICKUP_CREEP_DURATION_S` | 0.4 | 0.3 | Slightly less creep |
+| `SEARCH_TURN_DURATION_S` | 1.2 | 2.5 | Wider sweeps |
+| *New:* `EMA_ALPHA` | — | 0.4 | Detection smoothing |
+| *New:* `DERIVATIVE_GAIN` | — | 0.15 | Oscillation damping |
+| *New:* `TURN_ONLY_THRESHOLD_PX` | — | 50 | Stop-turn-go |
+| *New:* `PICKUP_COOLDOWN_S` | — | 2.0 | Avoid re-targeting |
+| *New:* `SEARCH_FORWARD_BURST_S` | — | 0.5 | Move between sweeps |
+
+---
+
+## Verification Plan
+
+> [!IMPORTANT]
+> These are Python scripts running on a Raspberry Pi controlling physical hardware, so automated unit tests cannot validate real-world behavior. Verification is through **debug logs** and **on-robot testing**.
+
+### Automated Check: Syntax Validation
+
+On the Pi (or any machine with Python 3):
+```bash
+python3 -m py_compile ecosweep_manual_final_patched.py
+python3 -m py_compile phase2/yolo_fpv_stream_optimized.py
+```
+Both must complete with **no errors**.
+
+### On-Robot Testing (Manual, Step-by-Step)
+
+> Run the bridge in debug mode: `sudo python3 -u ecosweep_manual_final.py 2>&1 | tee /tmp/bridge_test.log`
+
+| Test | How to do it | What to check in logs + behavior |
+|------|-------------|-----------------------------------|
+| **T1: Gear scales on AUTO_ON** | Toggle Autonomous ON in app | Log shows `GEAR:3` sent before `MODE:AUTO_ON` |
+| **T2: Search pattern** | AUTO ON, no objects visible | Robot sweeps left for ~2.5 s, drives forward 0.5 s, sweeps right. Smooth, not jerky. |
+| **T3: Approach — object far** | Place bottle 2m away, AUTO ON | Robot turns toward bottle (`APPROACH_FAR`), stops turning when centered, drives forward. Log shows `AUTO APPROACH_FAR bbox_cx=... err=... turn=...` |
+| **T4: Stop-turn-go** | Place bottle far to the side | Robot should stop forward movement and rotate in place until centered, then drive forward. |
+| **T5: No oscillation** | Watch robot approach a bottle head-on | Smooth approach, no left-right jitter. The derivative term should dampen it. |
+| **T6: Detection loss recovery** | Briefly cover the camera (0.5 s) during approach | Robot should coast gently (grace period) then resume approach. Should NOT stop-go-stop jerkily. |
+| **T7: Pickup sequence** | Let robot approach until close | Log should show `PICKUP: starting full sequence`. Arm opens → lowers → forearm extends → creep → close → retract → raise → rotate → release → return → home. |
+| **T8: AUTO OFF restores gear** | Toggle Autonomous OFF | Log shows `GEAR:1` sent. Manual joystick works at normal speed. |
+| **T9: YOLO crash resilience** | Kill YOLO process during AUTO | After 1 s of stale data, robot should go to SEARCH. After 5 s, log shows `WARNING: YOLO detection file...` |
+| **T10: Pickup retry** | If robot grips but misses, watch | If object is still detected post-pickup, robot should retry approach once before giving up |
+
+### Checklist After Testing
+
+- [ ] T1 passes — gear scales correctly
+- [ ] T2 passes — smooth search sweep
+- [ ] T3 passes — approaches directly toward object
+- [ ] T4 passes — stop-turn-go works at large offsets
+- [ ] T5 passes — no oscillation during approach
+- [ ] T6 passes — graceful detection loss handling
+- [ ] T7 passes — full arm sequence executes
+- [ ] T8 passes — manual control restored
+- [ ] T9 passes — stale detection handled
+- [ ] T10 passes — pickup retry works
+
+### Items Requiring Physical Calibration
+
+| Parameter | How to calibrate |
+|-----------|-----------------|
+| `TURN_LEFT_SIGN` / `TURN_RIGHT_SIGN` | Object on left → if robot turns right, flip to `-1` |
+| `PROPORTIONAL_GAIN` | If oscillating: lower to 0.6. If sluggish: raise to 1.0 |
+| `PICKUP_ARM_DOWN_S` | Watch arm descend — increase if it doesn't reach ground |
+| `PICKUP_FOREARM_FORWARD_S` | Watch forearm extend — increase if gripper doesn't reach object |
+| `PICKUP_GRIP_CLOSE_S` | Increase if object slips out |
+| `PICKUP_BBOX_MIN` | Place object at arm-reach distance, read `bbox_area` from debug log, set to that value −20% |

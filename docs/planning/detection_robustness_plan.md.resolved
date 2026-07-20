@@ -1,0 +1,162 @@
+# EcoSweep Detection Robustness — Engineering Plan
+
+## The Problem
+
+When the robot moves (especially turns), YOLO detection drops instantly. The object is still in frame, but YOLO either:
+- Returns no detection (confidence too low on blurry frame)
+- Is still processing the *previous* frame when the robot has already moved
+
+This causes a cycle: **detect → turn → lose detection → go to SEARCH → find again → repeat** — the robot never reaches the object.
+
+---
+
+## Root Cause Analysis
+
+| # | Root Cause | Evidence from Logs | Impact |
+|---|-----------|-------------------|--------|
+| 1 | **YOLO is slow** (~200-400ms per inference on Pi) | `det_age` ranges 0.0-0.6s | By the time YOLO processes a frame, the robot has already moved |
+| 2 | **No object memory** — each frame is independent | `lost detection for 2.0s, back to SEARCH` | One missed frame = object lost, even if it was just there |
+| 3 | **Motion blur** at turn speed 50 | Object blurs → confidence drops below threshold | Detection drops during any movement |
+| 4 | **YOLO runs on every 2nd frame** | `YOLO_EVERY_N_FRAMES = 2` with 50ms sleep | Effective YOLO rate ~3-5 FPS on Pi |
+| 5 | **No spatial prediction** | Bridge has no idea WHERE object went | Can't maintain approach direction during detection gaps |
+
+---
+
+## Solutions — 3 Changes
+
+### Change 1: Object Tracking Memory (Bridge-side)
+
+**File:** [ecosweep_manual_final_patched.py](file:///d:/Robot_newcontrol/hardware/pi/ecosweep_manual_final_patched.py)
+
+**Problem it solves:** Root causes 2 + 5
+
+**What it does:** Instead of relying on YOLO for *every single decision*, the bridge maintains a **short-term memory** of the last valid detection. When YOLO misses a frame, the bridge uses the last known position + decay to continue approaching.
+
+**How it works:**
+```
+if YOLO_has_detection:
+    memory.update(bbox_cx, bbox_area, timestamp)
+    use live detection
+elif memory.age < MEMORY_TIMEOUT (1.5s):
+    use memory (last known position)
+    decay confidence over time
+    continue current approach direction
+else:
+    truly lost → go to SEARCH
+```
+
+**Key parameters:**
+- `MEMORY_TIMEOUT_S = 1.5` — trust memory for 1.5s max
+- `MEMORY_DECAY_RATE = 0.7` — reduce confidence each cycle
+- Memory stores: `last_cx`, `last_area`, `last_timestamp`, `last_direction`
+
+**Why this works:** YOLO drops 1-3 frames during a turn (~0.3-0.9s). With 1.5s memory, the robot continues turning toward the last known position instead of giving up. By the time memory expires, YOLO has had 5+ chances to re-detect.
+
+---
+
+### Change 2: Motion-Blur Reduction via Camera Settings (YOLO-side)
+
+**File:** [yolo_fpv_stream_optimized.py](file:///d:/Robot_newcontrol/hardware/pi/phase2/yolo_fpv_stream_optimized.py)
+
+**Problem it solves:** Root cause 3
+
+**What it does:** Reduce exposure time and increase camera gain to minimize motion blur during robot movement. Also adds frame sharpness check to skip blurry frames.
+
+**Camera settings to add:**
+```python
+cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)      # Manual exposure mode
+cap.set(cv2.CAP_PROP_EXPOSURE, 40)           # Lower = less motion blur
+cap.set(cv2.CAP_PROP_GAIN, 2.0)             # Compensate brightness
+```
+
+**Blur detection (Laplacian variance):**
+```python
+gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+blur_score = cv2.Laplacian(gray, cv2.CV_64F).var()
+if blur_score < BLUR_THRESHOLD:
+    skip this frame  # Too blurry, YOLO will fail anyway
+```
+
+**Why this works:** Lower exposure = sharper frames during motion. The blur check avoids wasting YOLO inference on frames that will definitely fail, letting YOLO process the next sharp frame sooner.
+
+---
+
+### Change 3: Faster YOLO Pipeline (YOLO-side)
+
+**File:** [yolo_fpv_stream_optimized.py](file:///d:/Robot_newcontrol/hardware/pi/phase2/yolo_fpv_stream_optimized.py)
+
+**Problem it solves:** Root causes 1 + 4
+
+**What it does:** Optimize YOLO to run faster on the Pi so detections are more frequent and fresher.
+
+**Optimizations:**
+| Setting | Current | New | Effect |
+|---------|---------|-----|--------|
+| `YOLO_IMGSZ` | 416 | **320** | ~40% faster inference (smaller input) |
+| `YOLO_EVERY_N_FRAMES` | 2 | **1** | Run YOLO on every frame (no skipping) |
+| [yolo_worker](file:///d:/Robot_newcontrol/hardware/pi/phase2/yolo_fpv_stream_optimized.py#73-173) sleep | 50ms | **10ms** | Less idle time between frames |
+| Frame grab method | `_latest_frame.copy()` | Direct reference | Less memory copy overhead |
+
+**Additional: Use `model.track()` instead of `model.predict()`:**
+```python
+results = model.track(
+    frame,
+    conf=CONF_THRESHOLD,
+    imgsz=320,
+    persist=True,       # Keep tracking across frames
+    verbose=False,
+)
+```
+
+This uses YOLOv8's **built-in ByteTrack tracker** which assigns IDs to objects and maintains them even when detection briefly fails. No extra code needed — just swap `predict()` → `track()`.
+
+**Why this works:** `model.track()` uses a lightweight tracker between YOLO detections. Even if YOLO misses the object for 1-2 frames, the tracker predicts its position based on previous motion. Combined with smaller image size (faster inference), we get more detections per second.
+
+---
+
+## Implementation Order
+
+```mermaid
+graph LR
+    A["Change 3: Faster YOLO<br/>+ model.track()"] --> B["Change 2: Camera<br/>anti-blur settings"]
+    B --> C["Change 1: Bridge<br/>tracking memory"]
+    A --> D["Test: Does YOLO<br/>maintain detection<br/>during turns?"]
+    D -->|Yes| E["Move to Step 5+"]
+    D -->|No| B
+    B --> F["Test: Less blur<br/>during motion?"]
+    F -->|Yes| E
+    F -->|No| C
+```
+
+> [!IMPORTANT]
+> **Start with Change 3** (`model.track()` + smaller image). This single change may solve most of the problem because ByteTrack maintains object IDs across missed frames. Only add Changes 2 and 1 if needed.
+
+---
+
+## Testing Plan
+
+### After Change 3 (Faster YOLO + tracking):
+1. Set `AUTONOMY_STEP = 4`
+2. Place bottle in front of robot
+3. Auto ON → watch if robot **maintains detection during turns**
+4. Check logs: `det_age` should stay below 0.5s
+5. Check if `decision` stays consistent (not flip to NONE during turns)
+
+### After Change 2 (Camera anti-blur):
+1. Open FPV stream: `http://<PI_IP>:5000/video_feed`
+2. Move robot manually while watching stream
+3. Frames should be **sharper** during movement (less smearing)
+
+### After Change 1 (Bridge memory):
+1. Same as Change 3 test
+2. Watch for `MEMORY: using last known position` in bridge logs
+3. Robot should **continue turning** toward the object even when YOLO briefly drops
+
+---
+
+## Files Modified
+
+| File | Changes |
+|------|---------|
+| [yolo_fpv_stream_optimized.py](file:///d:/Robot_newcontrol/hardware/pi/phase2/yolo_fpv_stream_optimized.py) | `predict()` → `track()`, `YOLO_IMGSZ` 416→320, `YOLO_EVERY_N_FRAMES` 2→1, camera exposure settings, blur check |
+| [ecosweep_manual_final_patched.py](file:///d:/Robot_newcontrol/hardware/pi/ecosweep_manual_final_patched.py) | Add tracking memory with timeout + decay in autonomy loop |

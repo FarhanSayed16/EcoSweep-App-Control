@@ -1,0 +1,92 @@
+@startuml EcoSweep_System_Architecture
+!theme plain
+skinparam backgroundColor #FAFAFA
+skinparam componentStyle rectangle
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+skinparam ArrowColor #37474F
+skinparam ArrowThickness 2
+
+skinparam component {
+    BackgroundColor<<app>> #E3F2FD
+    BorderColor<<app>> #1976D2
+    FontColor<<app>> #0D47A1
+    
+    BackgroundColor<<pi>> #E8F5E9
+    BorderColor<<pi>> #388E3C
+    FontColor<<pi>> #1B5E20
+    
+    BackgroundColor<<arduino>> #FFF3E0
+    BorderColor<<arduino>> #F57C00
+    FontColor<<arduino>> #E65100
+    
+    BackgroundColor<<sensor>> #FCE4EC
+    BorderColor<<sensor>> #C2185B
+    FontColor<<sensor>> #880E4F
+    
+    BackgroundColor<<actuator>> #F3E5F5
+    BorderColor<<actuator>> #7B1FA2
+    FontColor<<actuator>> #4A148C
+}
+
+title EcoSweep System Architecture\n**Fig. 1**
+
+package "Mobile App" <<app>> {
+    component [Flutter App\n(Android)] as App
+    component [Joystick\nFPV Video\nAuto Toggle] as UI
+    App -down-> UI
+}
+
+package "Raspberry Pi 4" <<pi>> {
+    component [Bluetooth SPP\nServer] as BTServer
+    component [Bridge Script\n(ecosweep_manual_final.py)] as Bridge
+    component [YOLO Detection\n(yolo_fpv_stream_optimized.py)] as YOLO
+    component [Autonomy Loop] as Autonomy
+    component [/tmp/ecosweep_detection.json] as DetFile
+    
+    BTServer -right-> Bridge
+    Bridge -down-> Autonomy
+    YOLO -down-> DetFile
+    Autonomy -down-> DetFile
+    Bridge -right-> YOLO : spawns
+}
+
+package "Arduino Mega" <<arduino>> {
+    component [Serial Handler] as Serial
+    component [Motor Controller\n(BTS7960)] as Motors
+    component [Servo Controller\n(PCA9685)] as Servos
+    
+    Serial -down-> Motors : M:speed,turn
+    Serial -down-> Servos : SA:ARM_*, GRIP_*
+}
+
+package "Sensors" <<sensor>> {
+    component [USB Camera\n640×480] as Camera
+    component [Ultrasonic\nFront/Left/Right] as Ultrasonic
+    Camera -up-> YOLO
+    Ultrasonic -up-> Serial : DATA:SENSORS
+}
+
+package "Actuators" <<actuator>> {
+    component [5-Axis Arm\n+ Gripper] as Arm
+    component [4× DC Motors] as Drive
+    Servos -down-> Arm
+    Motors -down-> Drive
+}
+
+App <-[#1976D2,bold]-> BTServer : Bluetooth SPP\nRFCOMM Ch.1
+Bridge <-[#388E3C,bold]-> Serial : USB Serial\n9600 baud
+
+note right of Autonomy
+  Reads detection file
+  Sends M:, SA: commands
+  When MODE:AUTO_ON
+end note
+
+note right of DetFile
+  decision, bbox_area
+  confidence, person_detected
+  obstacle_detected
+end note
+
+@enduml

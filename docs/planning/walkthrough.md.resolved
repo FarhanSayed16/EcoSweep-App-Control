@@ -1,0 +1,53 @@
+# EcoSweep Autonomy Fix — Walkthrough
+
+## What Was Done
+
+All changes from the approved implementation plan have been applied to **2 files**:
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| [ecosweep_manual_final_patched.py](file:///d:/Robot_newcontrol/hardware/pi/ecosweep_manual_final_patched.py) | ~200 lines changed (constants, PD controller, EMA smoothing, staleness check, SEARCH rewrite, stop-turn-go approach, full pickup sequence, state feedback, GEAR on AUTO, YOLO watchdog, pickup retry) |
+| [yolo_fpv_stream_optimized.py](file:///d:/Robot_newcontrol/hardware/pi/phase2/yolo_fpv_stream_optimized.py) | ~10 lines changed (atomic JSON write with `tempfile` + `os.replace`) |
+
+### Changes Applied (by Phase)
+
+| Phase | What | Status |
+|-------|------|--------|
+| **1. Critical Fixes** | `GEAR:3` sent on AUTO_ON (fixes weak motors); Atomic JSON write (fixes race condition) | ✅ |
+| **2. Detection Robustness** | Stale detection rejected (>1s old); Grace period 0.2→0.6s; EMA smoothing on bbox; YOLO watchdog warning at 5s | ✅ |
+| **3. PD Steering** | Proportional gain 0.5→0.85; Added derivative term (0.15); Stop-turn-go (no forward when offset >50px); Tighter deadzone 15→12px | ✅ |
+| **4. Pickup Rewrite** | Full 9-step: open→lower→extend→creep→grip→retract→raise→rotate→release→return→home; Timings doubled for ground reach | ✅ |
+| **5. Reliability** | Improved search (2.5s sweep + forward burst); Grace coast (half speed, no turn); State feedback (`DATA:AUTO_STATE:`); Pickup retry (1 attempt); Cooldown after pickup (2s); Smoothing reset on new target and after recover | ✅ |
+| **6. Ultrasonics** | Left disabled (`False`) — enable manually after hardware verification | ⏸️ |
+
+## Validation
+
+```
+✅ python -m py_compile ecosweep_manual_final_patched.py  — passed
+✅ python -m py_compile yolo_fpv_stream_optimized.py      — passed
+```
+
+## Deploy to Pi
+
+Copy both files to the Pi and restart services:
+
+```bash
+# From your PC (replace YOUR_PI_IP):
+scp D:\Robot_newcontrol\hardware\pi\ecosweep_manual_final_patched.py pi@YOUR_PI_IP:/home/pi/ecosweep_manual_final.py
+scp D:\Robot_newcontrol\hardware\pi\phase2\yolo_fpv_stream_optimized.py pi@YOUR_PI_IP:/home/pi/ecosweep-phase2/yolo_fpv_stream_optimized.py
+
+# On the Pi:
+sudo systemctl restart ecosweep-yolo.service
+sudo systemctl restart ecosweep-bridge.service
+```
+
+## Physical Calibration Required
+
+| Parameter | How to test | In file |
+|-----------|------------|---------|
+| `TURN_LEFT_SIGN` / `TURN_RIGHT_SIGN` | Object on left → robot should turn left. If it turns right, set to `-1` | Bridge, line ~86-87 |
+| `PROPORTIONAL_GAIN` | If oscillating → lower to 0.6; if sluggish → raise to 1.0 | Bridge, line ~80 |
+| Pickup arm timings | Watch arm sequence, increase durations if arm doesn't reach ground | Bridge, lines ~91-100 |
+| `ULTRASONIC_OBSTACLE_ENABLED` | Test sensors via Arduino Serial Monitor; set `True` if valid | Bridge, line ~58 |

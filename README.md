@@ -1,201 +1,207 @@
-# EcoSweep Intelligent Robot Control App
+<p align="center">
+  <img src="landing_page/assets/logo.png" width="180" alt="EcoSweep Logo">
+</p>
 
-A comprehensive Flutter application for controlling the EcoSweep universal cleaning robot with advanced AI-powered features including voice interaction, people recognition, GPS tracking, and real-time telemetry monitoring.
+<h1 align="center">EcoSweep</h1>
 
-## 🚀 Features
+<h3 align="center">
+AI-Powered Universal Cleaning & Terrain-Capable Robotic System
+</h3>
 
-### 📱 Multi-Screen Navigation
-- **Advanced Dashboard**: Real-time GPS map, live status log, performance metrics, and command center
-- **Manual Control**: Proportional joystick control with servo sliders and presets
-- **Autonomous**: Mission selection and autonomous cleaning modes
-- **FPV Camera**: Live video streaming with overlay controls
-- **People Management**: Add and manage people for face recognition
-- **Settings**: Bluetooth device management and app configuration
+<p align="center">
+An intelligent robotics platform combining Embedded Systems, Artificial Intelligence, IoT, Mobile Computing, Computer Vision, and Autonomous Navigation.
+</p>
 
-### 🤖 Intelligent Features
-- **Voice Interaction**: Real-time display of robot speech and voice commands
-- **People Recognition**: Add people with photos for robot to recognize
-- **GPS Tracking**: Live map view showing robot's current location
-- **Performance Monitoring**: Track garbage collection and other metrics
-- **Live Status Log**: Real-time feed of robot actions and interactions
+<p align="center">
+<img src="https://img.shields.io/badge/Platform-Flutter-blue?style=for-the-badge&logo=flutter" alt="Platform">
+<img src="https://img.shields.io/badge/Arduino-Mega%202560-00979D?style=for-the-badge&logo=arduino" alt="Arduino">
+<img src="https://img.shields.io/badge/Raspberry%20Pi-4-red?style=for-the-badge&logo=raspberry-pi" alt="Raspberry Pi">
+<img src="https://img.shields.io/badge/Language-C++%20%7C%20Python%20%7C%20Dart-success?style=for-the-badge" alt="Languages">
+<img src="https://img.shields.io/badge/License-Proprietary-red?style=for-the-badge" alt="License">
+<img src="https://img.shields.io/badge/Status-Active%20Development-success?style=for-the-badge" alt="Status">
+</p>
 
-### 🎮 Enhanced Control System
-- **Proportional Movement**: Smooth speed and turn control (-255 to 255 range)
-- **Servo Control**: Individual angle control (0-180°) with sliders
-- **Preset Management**: Save and recall servo position presets
-- **Real-time Feedback**: Live sensor data and battery monitoring
+<h3 align="center">
+  🌐 <a href="https://ecosweep-robot.netlify.app/">Live Project Website & APK Download</a>
+</h3>
 
-### 📡 Enhanced Communication Protocol
+---
 
-The app uses an advanced communication protocol with the Raspberry Pi:
+# ⚠️ Intellectual Property & Usage Restriction
 
-#### **Outgoing Commands**
-| Command Type | Format | Example | Description |
-| :--- | :--- | :--- | :--- |
-| **Movement** | `M:<speed>,<turn>` | `M:200,-90` | Proportional motor control |
-| **Servo Angle** | `S:<id>,<angle>` | `S:1,120` | Set servo to specific angle |
-| **Servo Action** | `SA:<command>` | `SA:ARM_UP_START` | Continuous servo movement |
-| **Mode Set** | `MODE:<mode>` | `MODE:AUTO_ON` | Set operational mode |
-| **Preset Recall** | `PRESET:<name>` | `PRESET:pickup` | Execute saved preset |
-| **Person Add** | `PERSON:ADD:<name>` | `PERSON:ADD:John` | Add person for recognition |
+> **Copyright © 2026 Farhan Sayed & Simran Singh. All Rights Reserved.**
 
-#### **Incoming Data**
-| Data Type | Format | Example | Description |
-|:--- |:--- |:--- |:--- |
-| **Sensors** | `DATA:SENSORS:<front>,<left>,<right>` | `DATA:SENSORS:45,30,60` | Ultrasonic sensor readings |
-| **Battery** | `DATA:BATT:<robot_v>,<controller_v>` | `DATA:BATT:12.5,3.7` | Battery voltage levels |
-| **GPS** | `DATA:GPS:<lat>,<lon>` | `DATA:GPS:19.0760,72.8777` | Live GPS coordinates |
-| **Log** | `DATA:LOG:<message>` | `DATA:LOG:Voice cmd 'FORWARD'` | Status message for live log |
-| **Speech** | `DATA:SPEAK:<text>` | `DATA:SPEAK:My name is EcoSweep.` | Robot speech transcript |
-| **Stats** | `DATA:STATS:<items>` | `DATA:STATS:5` | Performance statistics |
+This repository contains proprietary software, hardware architecture, PCB designs, algorithms, firmware, mobile applications, documentation, and research developed by the authors.
 
-## 🏗️ Architecture
+### The following actions are STRICTLY PROHIBITED:
 
-### Hardware Communication Flow
-```
-Flutter App ↔ Bluetooth Classic (SPP) ↔ Raspberry Pi 4 ↔ USB Serial ↔ Arduino Mega 2560
-```
+❌ Copying source code
+❌ Reproducing hardware designs
+❌ Commercial use
+❌ Reverse engineering
+❌ Redistribution or republishing
+❌ Modifying and claiming ownership
+❌ Using any part of this project in academic or commercial work without written permission.
 
-### Key Components
-- **4 DC Motors**: For robot movement
-- **5 Servo Motors**: For robotic arm control
-- **Ultrasonic & IR Sensors**: For navigation and obstacle detection
-- **Raspberry Pi Camera**: For FPV video streaming
-- **GPS Module**: For location tracking
-- **Microphone & Speaker**: For voice interaction
-- **Face Recognition Camera**: For people recognition
+Unauthorized use may constitute copyright infringement and legal action may be pursued where applicable.
 
-## 📦 Dependencies
+---
 
-```yaml
-dependencies:
-  flutter:
-    sdk: flutter
-  cupertino_icons: ^1.0.8
-  flutter_joystick: ^0.2.1
-  google_fonts: ^5.1.0
-  flutter_bluetooth_serial: ^0.4.0
-  permission_handler: ^11.0.1
-  provider: ^6.1.1
-  shared_preferences: ^2.2.2
-  google_maps_flutter: ^2.5.0
-  image_picker: ^1.0.4
-  path_provider: ^2.1.1
-```
+# 🚀 Overview
 
-## 🚀 Getting Started
+**EcoSweep** is a next-generation intelligent robotic cleaning system developed to automate cleaning operations across indoor, outdoor, institutional, and semi-industrial environments.
 
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd Robot_newcontrol
-   ```
+Unlike traditional robotic vacuum cleaners, EcoSweep is built as a **hybrid robotic platform** capable of navigating uneven terrain while integrating intelligent sensing, robotic manipulation, real-time communication, GPS tracking, and future AI-powered autonomy.
 
-2. **Install dependencies**
-   ```bash
-   flutter pub get
-   ```
+The project combines **Embedded Systems**, **Flutter Mobile Development**, **Artificial Intelligence**, **IoT**, and **Robotics Engineering** into a single modular architecture. 
 
-3. **Run the app**
-   ```bash
-   flutter run
-   ```
+The robot utilizes an **Arduino Mega 2560** for real-time hardware control and a **Raspberry Pi 4** for high-level processing, communication, and future AI integration.
 
-## 📱 Usage
+---
 
-### Initial Setup
-1. Open the app and navigate to **Settings**
-2. Scan for and connect to your Raspberry Pi Bluetooth device
-3. Configure the camera stream URL (default: `http://192.168.1.100:8080/stream`)
+# 🤖 The EcoSweep Robot
 
-### Manual Control
-1. Navigate to **Manual Control** tab
-2. Use the joystick for proportional movement control
-3. Adjust servo angles using the sliders
-4. Save current servo positions as presets for quick recall
+Below is the actual EcoSweep robotic prototype developed during the project. The robot integrates a hybrid **Arduino + Raspberry Pi architecture**, robotic arm, multi-terrain wheelbase, GPS navigation, sensor fusion, Bluetooth communication, and modular AI expansion capabilities.
 
-### Autonomous Operation
-1. Navigate to **Autonomous** tab
-2. Select a cleaning mission (Room, Spot, Edge, Custom)
-3. Configure safety settings
-4. Start the mission and monitor progress
+<p align="center">
+<img src="assets/showcase/robot_front.jpg" width="45%" alt="EcoSweep Front">
+&nbsp;
+<img src="assets/showcase/robot_side.jpg" width="45%" alt="EcoSweep Side">
+</p>
 
-### FPV Camera
-1. Navigate to **FPV** tab
-2. Connect to the camera stream
-3. Use overlay joystick for FPV control
-4. Take snapshots and record video
+---
 
-## 🔧 Configuration
+# 📱 The Control Application
 
-### Camera Setup
-The Raspberry Pi should run a video streaming server (e.g., `mjpg-streamer`):
-```bash
-# On Raspberry Pi
-mjpg_streamer -i "input_uvc.so -d /dev/video0" -o "output_http.so -p 8080"
-```
+The EcoSweep mobile application (built with Flutter) acts as the primary control interface for the robot. It features a stunning Dark Mode UI with electric green accents for a premium, high-tech experience.
 
-### Bluetooth Pairing
-1. Pair your Raspberry Pi with the mobile device
-2. Ensure the Pi is running the robot control software
-3. Use the app's Settings screen to connect
+### ✅ Key App Features:
+- **Manual Robot Control** (Joystick, Differential Steering)
+- **Autonomous Mission Control**
+- **Bluetooth Communication**
+- **GPS Monitoring & Live Telemetry**
+- **FPV Camera Streaming**
+- **Interactive Demo Mode** (Test the app without hardware connected)
+- **Servo Arm Control & Presets**
 
-## 🛠️ Development
+<p align="center">
+  <img src="assets/app_screens/screen_1.jpg" width="22%" alt="Dashboard">
+  <img src="assets/app_screens/screen_2.jpg" width="22%" alt="Manual Control">
+  <img src="assets/app_screens/screen_3.jpg" width="22%" alt="Autonomous Mode">
+  <img src="assets/app_screens/screen_4.jpg" width="22%" alt="Settings">
+</p>
 
-### Project Structure
-```
-lib/
-├── main.dart                 # App entry point
-├── services/
-│   └── bluetooth_service.dart # Enhanced Bluetooth communication
-└── screens/
-    ├── main_navigation.dart   # Bottom navigation wrapper
-    ├── dashboard_screen.dart  # Main dashboard
-    ├── manual_control_screen.dart # Manual control interface
-    ├── autonomous_screen.dart # Autonomous mode control
-    ├── fpv_camera_screen.dart # FPV camera interface
-    └── settings_screen.dart  # App settings
+---
+
+# 🛠 Hardware Specifications
+
+| Component | Specification | Description |
+|-----------|---------------|-------------|
+| **Microcontroller** | Arduino Mega 2560 | Low-level motor & sensor controller |
+| **Processor** | Raspberry Pi 4 | High-level IoT processing & communication |
+| **Motor Driver** | BTS7960 | High-current DC Motor Driver |
+| **Servo Driver** | PCA9685 | Multi-DOF Robotic Arm Servo Controller |
+| **GPS Module** | NEO-6M | Global positioning tracking |
+| **IMU** | MPU6050 | Accelerometer & Gyroscope |
+| **Compass** | HMC5883L | Digital Compass |
+| **Ultrasonic** | HC-SR04 (x3) | 360-degree obstacle detection |
+| **Power Supply** | Li-Po + Li-Ion | Hybrid high-current battery system |
+| **Communication** | Bluetooth Classic | Low-latency mobile connection |
+| **Camera** | Raspberry Pi Camera | FPV Video Streaming |
+
+---
+
+# 📡 System Architecture
+
+```text
+                    Flutter Application
+                            │
+             Bluetooth Classic (SPP)
+                            │
+                    Raspberry Pi 4
+          ┌──────────────┬──────────────┐
+          │              │              │
+     Camera        Voice Engine     GPS Module
+          │              │              │
+          └──────────────┴──────────────┘
+                            │
+                      USB Serial
+                            │
+                   Arduino Mega 2560
+                            │
+      ┌────────────┬─────────────┬──────────────┐
+      │            │             │              │
+  DC Motors     Servo Arm    Ultrasonic     IR Sensors
 ```
 
-### Key Features Implemented
-- ✅ Multi-screen navigation with BottomNavigationBar
-- ✅ Proportional speed control with M:<speed>,<turn> commands
-- ✅ Enhanced servo control with sliders and presets
-- ✅ Real-time data parsing for sensors and battery
-- ✅ FPV camera integration with overlay controls
-- ✅ Dashboard with connection status and radar view
-- ✅ Comprehensive settings and device management
+---
 
-## 🐛 Troubleshooting
+# 📈 Development Timeline & Roadmap
 
-### Common Issues
-1. **Bluetooth Connection Failed**
-   - Ensure devices are paired
-   - Check Bluetooth permissions
-   - Restart Bluetooth service
+### Phase 1: Hardware Foundation
+- ✅ Chassis Assembly & Hardware Design
+- ✅ Motor Driver & Power System Integration
 
-2. **Camera Stream Not Loading**
-   - Verify camera URL is correct
-   - Check network connectivity
-   - Ensure streaming server is running
+### Phase 2: Communication & Control
+- ✅ Arduino Real-Time Programming
+- ✅ Bluetooth Communication Protocol
+- ✅ Manual Joystick Control
 
-3. **Commands Not Working**
-   - Verify Bluetooth connection
-   - Check robot is not in autonomous mode
-   - Ensure proper command format
+### Phase 3: Mobile Dashboard
+- ✅ Flutter Application Architecture
+- ✅ Live Telemetry Dashboard
+- ✅ Servo Arm Controls & Presets
 
-## 📄 License
+### Phase 4: Navigation
+- ✅ GPS Tracking
+- ✅ Multi-Sensor Monitoring (Ultrasonic, IMU, Compass)
+- ✅ FPV Camera Integration
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+### Phase 5 & Beyond: AI & Automation 🚧
+- 🚧 Voice Assistant Integration
+- 🚧 Face & Object Recognition (YOLO / OpenCV)
+- 🚧 AI Autonomous Navigation & Cleaning
+- 🚧 Cloud IoT Monitoring
 
-## 🤝 Contributing
+---
 
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
+# 👨‍💻 Development Team
 
-## 📞 Support
+EcoSweep is the result of extensive research and development in the fields of Embedded Systems, Robotics, Artificial Intelligence, IoT, and Mobile Application Development.
 
-For support and questions, please contact the development team or create an issue in the repository.
+| Role | Contributor | Responsibilities |
+|------|-------------|------------------|
+| **Lead Robotics Engineer** | **Farhan Sayed** | System Architecture, Robotics Engineering, Flutter Application, Embedded Systems (Arduino/Pi), PCB Design, AI Integration |
+| **Co-Developer** | **Simran Singh** | Robotics Development, Hardware Assembly, Testing & Validation, Documentation |
+
+### 📞 Contact & Portfolio
+- **Farhan Sayed**: [GitHub Profile](https://github.com/FarhanSayed16)
+
+---
+
+# 📊 Project Statistics
+
+- **12+ Months** of active research & development
+- **10,000+ Lines of Code** across Dart, C++, and Python
+- **15+ Hardware Components** integrated
+- **2 Processing Units** working in tandem
+- **30+ Flutter Screens & Commands**
+- **1 Custom Serial Protocol** for robust communication
+
+---
+
+<p align="center">
+Made with ❤️ using<br>
+<b>Flutter • Arduino • Raspberry Pi • C++ • Python</b>
+</p>
+
+<p align="center">
+Designed and Developed by<br>
+<b>Farhan Sayed</b><br>
+Co-Developed by<br>
+<b>Simran Singh</b>
+</p>
+
+<p align="center">
+<b>© 2026 All Rights Reserved.</b>
+</p>

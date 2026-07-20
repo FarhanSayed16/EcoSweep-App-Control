@@ -1,0 +1,54 @@
+@startuml EcoSweep_Pickup_Sequence
+!theme plain
+skinparam backgroundColor #FAFAFA
+skinparam defaultFontName Arial
+skinparam defaultFontSize 10
+skinparam ArrowColor #37474F
+skinparam sequenceArrowThickness 2
+
+skinparam sequenceParticipant {
+    BackgroundColor #E3F2FD
+    BorderColor #1565C0
+}
+
+skinparam sequenceLifeLine {
+    BorderColor #90A4AE
+}
+
+title EcoSweep Pickup Sequence (PICKUP State)\n**Fig. 5 (Optional / Supplementary)**
+
+participant "Autonomy" as Auto #E8F5E9
+participant "Bridge" as Bridge #E3F2FD
+participant "Arduino" as Ard #FFF3E0
+participant "Motors" as Mtr #FFF8E1
+participant "Arm" as Arm #FFF8E1
+
+Auto -> Auto : bbox ≥ 55k, centered\nstable 5 frames
+Auto -> Bridge : M:0,0 (stop)
+Bridge -> Ard : M:0,0
+Ard -> Mtr : stop
+
+Auto -> Bridge : M:25,0 (creep 0.4 s)
+Bridge -> Ard : M:25,0
+Ard -> Mtr : forward
+
+note over Auto : Creep forward\n0.4 s
+
+Auto -> Bridge : SA:ARM_DOWN_START
+Bridge -> Ard : SA:ARM_DOWN_START
+Ard -> Arm : arm down
+note over Arm : 0.5 s
+
+Auto -> Bridge : SA:GRIP_CLOSE_START
+Bridge -> Ard : SA:GRIP_CLOSE_START
+Ard -> Arm : gripper close
+note over Arm : 1.8 s
+
+Auto -> Bridge : SA:ARM_UP_START
+Bridge -> Ard : SA:ARM_UP_START
+Ard -> Arm : arm up
+note over Arm : 0.6 s
+
+Auto -> Auto : → RECOVER
+
+@enduml

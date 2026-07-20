@@ -1,0 +1,83 @@
+@startuml EcoSweep_State_Machine
+!theme plain
+skinparam backgroundColor #FAFAFA
+skinparam stateAttributeFontSize 10
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+skinparam ArrowColor #37474F
+skinparam ArrowThickness 2
+
+skinparam state {
+    BackgroundColor<<search>> #E3F2FD
+    BorderColor<<search>> #1565C0
+    
+    BackgroundColor<<approach>> #E8F5E9
+    BorderColor<<approach>> #2E7D32
+    
+    BackgroundColor<<pickup>> #FFF8E1
+    BorderColor<<pickup>> #F9A825
+    
+    BackgroundColor<<recover>> #FFEBEE
+    BorderColor<<recover>> #C62828
+    
+    BackgroundColor<<idle>> #ECEFF1
+    BorderColor<<idle>> #546E7A
+}
+
+title EcoSweep Autonomy State Machine\n**Fig. 4**
+
+[*] --> SEARCH
+
+state "SEARCH" as SEARCH <<search>> {
+    SEARCH : Rotate slowly (speed=55, turn=±75)
+    SEARCH : Flip direction every 1.2 s
+    SEARCH : No garbage detected
+}
+
+state "APPROACH_FAR" as APPROACH_FAR <<approach>> {
+    APPROACH_FAR : bbox_area < 40,000 px²
+    APPROACH_FAR : Drive forward (speed=70)
+    APPROACH_FAR : Turn only if |offset| > 90 px
+}
+
+state "APPROACH_CLOSE" as APPROACH_CLOSE <<approach>> {
+    APPROACH_CLOSE : 40k ≤ bbox < 55k px²
+    APPROACH_CLOSE : Slow (speed=40)
+    APPROACH_CLOSE : Proportional steering
+}
+
+state "PICKUP" as PICKUP <<pickup>> {
+    PICKUP : bbox ≥ 55k, centered
+    PICKUP : Stable 5 frames
+    PICKUP : Creep → Arm down → Grip → Arm up
+}
+
+state "RECOVER" as RECOVER <<recover>> {
+    RECOVER : Back up 0.5 s
+    RECOVER : Turn toward clear side
+    RECOVER : Return to SEARCH
+}
+
+SEARCH --> APPROACH_FAR : has_garbage\nbbox < 40k
+SEARCH --> APPROACH_CLOSE : has_garbage\nbbox ≥ 40k
+
+APPROACH_FAR --> APPROACH_CLOSE : bbox ≥ 40k
+
+APPROACH_FAR --> PICKUP : bbox ≥ 55k\ncentered\nstable 5 frames\nOR lost detection fallback
+APPROACH_CLOSE --> PICKUP : bbox ≥ 55k\ncentered\nstable 5 frames\nOR lost detection fallback
+
+APPROACH_FAR --> SEARCH : No detection\n> 2 s timeout
+APPROACH_CLOSE --> SEARCH : No detection\n> 2 s timeout
+
+PICKUP --> RECOVER : Arm sequence done
+
+RECOVER --> SEARCH : Turn complete
+
+note right of PICKUP
+  **Lost-detection fallback:**
+  last_bbox ≥ 38k AND
+  lost < 0.8 s →
+  proceed to PICKUP
+end note
+
+@enduml
