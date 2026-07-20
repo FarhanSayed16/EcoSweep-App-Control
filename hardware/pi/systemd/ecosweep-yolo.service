@@ -1,0 +1,19 @@
+[Unit]
+Description=EcoSweep YOLO FPV Stream (webcam + detection)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+# Paths: YOLO in ecosweep-phase2
+ExecStartPre=/bin/bash -c 'for i in $(seq 1 60); do [ -e /dev/video0 ] && break; sleep 1; done; sleep 5'
+ExecStart=/usr/bin/python3 /home/pi/ecosweep-phase2/yolo_fpv_stream_optimized.py
+WorkingDirectory=/home/pi/ecosweep-phase2
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

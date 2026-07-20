@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EcoSweep | Intelligent Robot Control</title>
+    <meta name="description"
+        content="Download the EcoSweep Robot Controller app. Advanced AI-powered features including mission planning, people recognition, and real-time telemetry.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Roboto+Mono:wght@400;700&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+    <!-- Phosphor Icons for modern iconography -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+</head>
+
+<body>
+    <div class="background-effects">
+        <div class="glow-orb orb-1"></div>
+        <div class="glow-orb orb-2"></div>
+        <div class="grid-overlay"></div>
+    </div>
+
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="logo">
+                <img src="assets/logo.png" alt="EcoSweep Logo" class="brand-logo">
+                <span>EcoSweep</span>
+            </div>
+            <div class="nav-links">
+                <a href="#features">Features</a>
+                <a href="#about">About</a>
+            </div>
+        </div>
+    </nav>
+
+    <header class="hero">
+        <div class="hero-content">
+            <div class="badge">v1.0.0 is Live</div>
+            <h1 class="hero-title">Command Your World with <span class="highlight">Precision</span></h1>
+            <p class="hero-subtitle">The ultimate control dashboard for the EcoSweep universal cleaning rover.
+                Seamlessly navigate varied terrains, control the robotic arm, and monitor sensor data in real-time.</p>
+
+            <div class="cta-group">
+                <a href="downloads/EcoSweep.apk" download="EcoSweep.apk" class="btn btn-primary" id="downloadBtn">
+                    <i class="ph ph-android-logo"></i>
+                    Download APK
+                    <div class="btn-shine"></div>
+                </a>
+                <a href="#features" class="btn btn-secondary">Explore Features</a>
+            </div>
+            <div class="download-info">Requires Android 8.0+ | Free</div>
+            <div class="tech-badges" style="margin-top: 2rem; display: flex; gap: 0.75rem; justify-content: flex-start; flex-wrap: wrap;">
+                <span style="background: rgba(0, 230, 118, 0.1); border: 1px solid rgba(0, 230, 118, 0.3); color: #00E676; padding: 0.5rem 1rem; border-radius: 50px; font-size: 0.85rem; font-weight: 600; display: inline-flex; align-items: center; gap: 0.4rem; backdrop-filter: blur(5px); box-shadow: 0 4px 15px rgba(0, 230, 118, 0.1);">
+                    <i class="ph-fill ph-device-mobile"></i> Flutter App
+                </span>
+                <span style="background: rgba(0, 151, 157, 0.1); border: 1px solid rgba(0, 151, 157, 0.3); color: #00D3DB; padding: 0.5rem 1rem; border-radius: 50px; font-size: 0.85rem; font-weight: 600; display: inline-flex; align-items: center; gap: 0.4rem; backdrop-filter: blur(5px); box-shadow: 0 4px 15px rgba(0, 151, 157, 0.1);">
+                    <i class="ph-fill ph-cpu"></i> Arduino Mega
+                </span>
+                <span style="background: rgba(220, 53, 69, 0.1); border: 1px solid rgba(220, 53, 69, 0.3); color: #FF4D5E; padding: 0.5rem 1rem; border-radius: 50px; font-size: 0.85rem; font-weight: 600; display: inline-flex; align-items: center; gap: 0.4rem; backdrop-filter: blur(5px); box-shadow: 0 4px 15px rgba(220, 53, 69, 0.1);">
+                    <i class="ph-fill ph-hard-drives"></i> Raspberry Pi 4
+                </span>
+                <span style="background: rgba(255, 193, 7, 0.1); border: 1px solid rgba(255, 193, 7, 0.3); color: #FFD54F; padding: 0.5rem 1rem; border-radius: 50px; font-size: 0.85rem; font-weight: 600; display: inline-flex; align-items: center; gap: 0.4rem; backdrop-filter: blur(5px); box-shadow: 0 4px 15px rgba(255, 193, 7, 0.1);">
+                    <i class="ph-fill ph-rocket"></i> Active Development
+                </span>
+            </div>
+        </div>
+
+        <div class="hero-visual">
+            <div class="app-mockup">
+                <div class="mockup-header">
+                    <div class="status-dot"></div>
+                    <div class="status-dot"></div>
+                    <div class="status-dot"></div>
+                </div>
+                <div class="mockup-content">
+                    <div class="mockup-line w-75"></div>
+                    <div class="mockup-line w-50"></div>
+                    <div class="mockup-radar">
+                        <div class="radar-sweep"></div>
+                    </div>
+                    <div class="mockup-stats">
+                        <div class="stat-box"></div>
+                        <div class="stat-box"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="floating-element feat-1"><i class="ph ph-robot"></i> Robotic Arm Control</div>
+            <div class="floating-element feat-2"><i class="ph ph-radar"></i> Hybrid Navigation</div>
+        </div>
+    </header>
+
+    <section id="features" class="features-section">
+        <div class="section-header">
+            <h2>Next-Gen <span class="highlight">Cleaning Rover</span></h2>
+            <p>Built for efficiency in domestic, institutional, and industrial environments.</p>
+        </div>
+
+        <div class="features-grid">
+            <div class="feature-card glass-card">
+                <div class="feature-icon"><i class="ph ph-hand-grabbing"></i></div>
+                <h3>Robotic Arm Control</h3>
+                <p>Manage the servo-driven robotic arm to pick up and handle small objects during cleaning tasks.</p>
+            </div>
+            <div class="feature-card glass-card">
+                <div class="feature-icon"><i class="ph ph-navigation-arrow"></i></div>
+                <h3>Hybrid Navigation</h3>
+                <p>Leverages Ultrasonic, IR, GPS, and IMU sensors for intelligent obstacle avoidance and routing.</p>
+            </div>
+            <div class="feature-card glass-card">
+                <div class="feature-icon"><i class="ph ph-cpu"></i></div>
+                <h3>Dual Architecture</h3>
+                <p>Powered by an Arduino Mega for real-time motor control and a Raspberry Pi 4 for Bluetooth
+                    communication.</p>
+            </div>
+            <div class="feature-card glass-card">
+                <div class="feature-icon"><i class="ph ph-battery-charging"></i></div>
+                <h3>Smart Power Management</h3>
+                <p>Hybrid Li-Po and Li-Ion battery system ensuring stable power for high-current motors and delicate
+                    electronics.</p>
+            </div>
+            <div class="feature-card glass-card">
+                <div class="feature-icon"><i class="ph ph-magic-wand"></i></div>
+                <h3>Interactive Demo Mode</h3>
+                <p>Don't have the hardware yet? Turn on Demo Mode in settings to simulate real-time telemetry and test
+                    the full application UI.</p>
+            </div>
+        </div>
+    </section>
+
+    <section id="about" class="hardware-section">
+        <div class="section-header">
+            <h2>Advanced <span class="highlight">Hardware Architecture</span></h2>
+            <p>A sophisticated integration of embedded systems, IoT processing, and multi-sensor navigation.</p>
+        </div>
+        <div class="hardware-gallery">
+            <div class="hardware-image-wrapper">
+                <img src="assets/robot_side.jpg" alt="EcoSweep Rover Side View" class="hardware-img">
+                <div class="hardware-details">
+                    <h3>Mechanical & Processing Core</h3>
+                    <p>Powered by a dual-compute architecture bridging a <strong>Raspberry Pi 4</strong> (high-level IoT
+                        & Bluetooth processing) and an <strong>Arduino Mega 2560</strong> (real-time motor/sensor
+                        execution). Features a <strong>PCA9685-driven</strong> multi-DOF robotic arm for precise object
+                        manipulation, all powered by an optimized Li-Po/Li-Ion split-voltage management system.</p>
+                </div>
+            </div>
+            <div class="hardware-image-wrapper">
+                <img src="assets/robot_front.jpg" alt="EcoSweep Rover Front View" class="hardware-img">
+                <div class="hardware-details">
+                    <h3>Sensor Fusion Navigation Array</h3>
+                    <p>Equipped with a robust suite of environmental sensors including a 360-degree <strong>Ultrasonic &
+                            IR array</strong>, <strong>NEO-6M GPS</strong>, and a 6-axis <strong>MPU6050 IMU</strong>
+                        (Accelerometer/Gyroscope) coupled with an <strong>HMC5883L Magnetometer</strong> to achieve
+                        stable, semi-autonomous spatial awareness and terrain mapping.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="team" class="features-section" style="padding-top: 2rem;">
+        <div class="section-header">
+            <h2>The <span class="highlight">Development Team</span></h2>
+            <p>Built with passion for robotics, AI, and embedded systems.</p>
+        </div>
+        <div class="features-grid"
+            style="grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); justify-items: center;">
+            <div class="feature-card glass-card"
+                style="text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+                <div class="feature-icon" style="font-size: 3rem; margin-bottom: 1rem;"><i class="ph ph-user-focus"></i>
+                </div>
+                <h3>Farhan Sayed</h3>
+                <p style="color: var(--accent); font-weight: 600; margin-bottom: 1rem;">Lead Robotics Engineer</p>
+                <p style="font-size: 0.9rem; line-height: 1.5;">System Architecture, Robotics Engineering, Flutter
+                    Application, Embedded Systems, PCB Design & AI Integration.</p>
+            </div>
+            <div class="feature-card glass-card"
+                style="text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+                <div class="feature-icon" style="font-size: 3rem; margin-bottom: 1rem;"><i
+                        class="ph ph-users-three"></i></div>
+                <h3>Simran Singh</h3>
+                <p style="color: var(--accent); font-weight: 600; margin-bottom: 1rem;">Co-Developer</p>
+                <p style="font-size: 0.9rem; line-height: 1.5;">Robotics Development, Hardware Assembly, Testing &
+                    Validation, Documentation & Project Integration.</p>
+            </div>
+        </div>
+    </section>
+
+    <footer class="footer">
+        <p>&copy; 2026 Farhan Sayed & Simran Singh. All Rights Reserved. Built with Flutter.</p>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+
+</html>

@@ -5,7 +5,7 @@ buildscript {
         gradlePluginPortal()
     }
     dependencies {
-        classpath "com.android.tools.build:gradle:8.2.1" // Ensure correct AGP version
+        classpath "com.android.tools.build:gradle:8.7.2"
     }
 }
 
@@ -22,6 +22,28 @@ subprojects {
 }
 subprojects {
     project.evaluationDependsOn(":app")
+}
+
+// Fix for plugins (e.g. flutter_bluetooth_serial) that lack namespace with AGP 8+
+// Only register afterEvaluate for projects not yet evaluated (avoids "already evaluated" error)
+subprojects { subproject ->
+    if (!subproject.state.executed) {
+        subproject.afterEvaluate {
+            if (subproject.plugins.hasPlugin("com.android.library")) {
+                def android = subproject.extensions.findByName("android")
+                if (android != null && android.namespace == null) {
+                    def manifest = file("${subproject.projectDir}/src/main/AndroidManifest.xml")
+                    if (manifest.exists()) {
+                        def packageName = new XmlParser().parse(manifest).attribute("package")
+                        if (packageName != null && !packageName.isEmpty()) {
+                            android.namespace = packageName
+                            println "Set namespace for ${subproject.name} to ${packageName}"
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 tasks.register("clean", Delete) {
